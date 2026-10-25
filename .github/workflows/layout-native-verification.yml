@@ -1,0 +1,85 @@
+name: Bounded layout native verification
+on:
+  push:
+    branches: [verify/layout-native-20261025-v2]
+permissions:
+  contents: read
+concurrency:
+  group: bounded-layout-native-verification
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12.10"
+      - name: Install fixed engine-only dependencies
+        run: python -m pip install pytest==9.0.3 psutil==7.2.2 pylance==4.0.1 pyarrow==24.0.0 numpy==2.4.4
+      - name: Freeze remote scope
+        id: freeze
+        run: python .github/scripts/verify_layout_native.py prepare
+      - name: Qualify first_live
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_layout_native.py run first_live > ci-layout-native-results/first_live/output.log 2>&1
+          CASTLE_SCOPE_RC=$?
+          set -e
+          cat ci-layout-native-results/first_live/output.log
+          python .github/scripts/verify_layout_native.py verify first_live "$CASTLE_SCOPE_RC"
+      - name: Qualify lost_append
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_layout_native.py run lost_append > ci-layout-native-results/lost_append/output.log 2>&1
+          CASTLE_SCOPE_RC=$?
+          set -e
+          cat ci-layout-native-results/lost_append/output.log
+          python .github/scripts/verify_layout_native.py verify lost_append "$CASTLE_SCOPE_RC"
+      - name: Qualify lost_ack
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_layout_native.py run lost_ack > ci-layout-native-results/lost_ack/output.log 2>&1
+          CASTLE_SCOPE_RC=$?
+          set -e
+          cat ci-layout-native-results/lost_ack/output.log
+          python .github/scripts/verify_layout_native.py verify lost_ack "$CASTLE_SCOPE_RC"
+      - name: Qualify rebuild_reuse
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_layout_native.py run rebuild_reuse > ci-layout-native-results/rebuild_reuse/output.log 2>&1
+          CASTLE_SCOPE_RC=$?
+          set -e
+          cat ci-layout-native-results/rebuild_reuse/output.log
+          python .github/scripts/verify_layout_native.py verify rebuild_reuse "$CASTLE_SCOPE_RC"
+      - name: Qualify native_source
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_layout_native.py run native_source > ci-layout-native-results/native_source/output.log 2>&1
+          CASTLE_SCOPE_RC=$?
+          set -e
+          cat ci-layout-native-results/native_source/output.log
+          python .github/scripts/verify_layout_native.py verify native_source "$CASTLE_SCOPE_RC"
+      - name: Preserve all synthetic evidence
+        if: always() && steps.freeze.outcome == 'success'
+        run: python .github/scripts/verify_layout_native.py archive
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always() && steps.freeze.outcome == 'success'
+        with:
+          name: layout-native-evidence
+          path: layout-native-evidence.tar
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
