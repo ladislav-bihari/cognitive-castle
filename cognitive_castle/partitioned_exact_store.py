@@ -740,6 +740,11 @@ class _PartitionStore(OrderedBulkExactStore):
         for identity in ids:
             if identity in locations:
                 groups.setdefault(locations[identity]["partition_id"], []).append(identity)
+        # The local dataset is one immutable version under the existing access guard.
+        # Read its actual batch evidence lazily, once per bounded lookup, never
+        # retain it on the store or reuse it across separate proof operations.
+        geometry_after = None
+        batch_proof = None
         for pid, group in groups.items():
             if pid == self.pid:
                 rows = lookup_many(dataset, group, checked=True)
@@ -763,11 +768,16 @@ class _PartitionStore(OrderedBulkExactStore):
                     pid == self.pid
                     and location["state"] == "reserved"
                     and self.intent_id is not None
-                    and self._geometry(dataset) == self.registry["mutation"]["after"]
-                    and identity != bulk.key("batch", self.intent_id)
                 ):
-                    if migration.hashed(row) != self._context_batch(dataset).get(identity):
-                        raise _StoreError("corrupt")
+                    if geometry_after is None:
+                        geometry_after = (
+                            self._geometry(dataset) == self.registry["mutation"]["after"]
+                        )
+                    if geometry_after and identity != bulk.key("batch", self.intent_id):
+                        if batch_proof is None:
+                            batch_proof = self._context_batch(dataset)
+                        if migration.hashed(row) != batch_proof.get(identity):
+                            raise _StoreError("corrupt")
                 result[identity] = row
             if any(
                 identity not in rows and locations[identity]["state"] != "reserved"
