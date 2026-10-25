@@ -1,0 +1,53 @@
+name: Grouped owner isolated verification
+on:
+  push:
+    branches: [verify/grouped-owner-20261025]
+permissions:
+  contents: read
+concurrency:
+  group: grouped-owner-isolated-verification
+  cancel-in-progress: false
+jobs:
+  pure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12.11"
+      - name: Install only pure-test dependencies
+        run: python -m pip install pytest==9.0.3 psutil==7.2.2
+      - name: Preserve baseline and prepare isolated output
+        run: python .github/scripts/verify_grouped_owner.py prepare
+      - name: Confirm regression on the preserved baseline
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_grouped_owner.py baseline > .ci-grouped-results/baseline.log 2>&1
+          CASTLE_BASELINE_RC=$?
+          set -e
+          cat .ci-grouped-results/baseline.log
+          python .github/scripts/verify_grouped_owner.py verify-baseline "$CASTLE_BASELINE_RC"
+      - name: Verify all affected pure cases on the candidate
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_grouped_owner.py candidate > .ci-grouped-results/candidate.log 2>&1
+          CASTLE_CANDIDATE_RC=$?
+          set -e
+          cat .ci-grouped-results/candidate.log
+          python .github/scripts/verify_grouped_owner.py verify-candidate "$CASTLE_CANDIDATE_RC"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: grouped-owner-pure-evidence
+          path: .ci-grouped-results
+          if-no-files-found: error
+          retention-days: 7
