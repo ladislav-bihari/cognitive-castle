@@ -513,7 +513,7 @@ def export_slice(descriptor, cursor, *, layout=None):
                 if layout["action"] == "export" and layout["allowed_plan_hashes"] != [hashed(plan)]:
                     raise Refusal("conflict", "layout_owner_plan_mismatch")
                 plans = [plan]
-                if layout["action"] == "export":
+                if layout["action"] in {"export", "prepare"}:
                     _export_owner(source, result, cursor, owner=owner)
         else:
             after = initial_cursor(

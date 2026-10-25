@@ -367,9 +367,15 @@ def validate_layout_source_window(value, descriptor, before):
     if (
         value["format"] != SOURCE_REQUEST
         or value["packing"] != PACKING
-        or value["action"] not in {"plan", "export"}
+        or value["action"] not in {"plan", "export", "prepare"}
     ):
         raise ValueError("layout source request version")
+    if value["action"] == "prepare" and (
+        reg["format"] != migration.NATIVE_FORMAT
+        or before["owner"] is not None
+        or before["phase"] != "history"
+    ):
+        raise ValueError("native first-slice preparation only")
     hashes = value["allowed_plan_hashes"]
     if not isinstance(hashes, list) or len(hashes) != int(value["action"] == "export"):
         raise ValueError("single admitted source plan")
@@ -393,7 +399,8 @@ def validate_layout_source_result(value, window, descriptor, before):
             "cursor_after",
             "plans",
             "export",
-        },
+        }
+        | ({"preparation_hash"} if window["action"] == "prepare" else set()),
         "layout source response",
     )
     migration.frame_bytes(value)
@@ -412,6 +419,8 @@ def validate_layout_source_result(value, window, descriptor, before):
     if value["status"] != "ok":
         if value["plans"] != [] or value["export"] is not None or value["cursor_after"] != before:
             raise ValueError("layout refusal progress")
+        if window["action"] == "prepare" and value["preparation_hash"] is not None:
+            raise ValueError("preparation refusal evidence")
         return value
     if (
         value["reason"] is not None
@@ -419,17 +428,33 @@ def validate_layout_source_result(value, window, descriptor, before):
         or len(value["plans"]) > 1
     ):
         raise ValueError("layout source success")
-    if window["action"] == "plan":
+    if window["action"] in {"plan", "prepare"}:
         if value["cursor_after"] != before:
             raise ValueError("planning never advances frontier")
         if value["plans"]:
             validate_owner_plan(value["plans"][0], reg)
-            if value["export"] is not None:
+            if window["action"] == "prepare":
+                bulk.sha(value["preparation_hash"])
+                if value["preparation_hash"] != migration.hashed([value["plans"], value["export"]]):
+                    raise ValueError("prepared source association")
+                # Validate the original inner export against its actual plan.
+                # This does not admit a home or advance a durable frontier.
+                admitted_window = dict(
+                    window,
+                    action="export",
+                    allowed_plan_hashes=[migration.hashed(value["plans"][0])],
+                )
+                exported = {k: v for k, v in value.items() if k != "preparation_hash"}
+                exported.update(action="export", cursor_after=value["export"]["cursor_after"])
+                validate_layout_source_result(exported, admitted_window, descriptor, before)
+            elif value["export"] is not None:
                 raise ValueError("planning body")
         else:
             terminal = migration.validate_export(value["export"], reg, before)
             if terminal["status"] != "ok" or not terminal["complete"]:
                 raise ValueError("planning exhaustion evidence")
+            if window["action"] == "prepare" and value["preparation_hash"] is not None:
+                raise ValueError("terminal preparation evidence")
         return value
     if len(value["plans"]) != 1:
         raise ValueError("export admitted owner plan")

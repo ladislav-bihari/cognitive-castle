@@ -29,6 +29,15 @@ def test_preparation_does_not_change_sqlite_or_admitted_export_contract():
         runtime.source_request(original["descriptor"], original["cursor"], layout=window)
 
 
+def test_preparation_refuses_valid_mid_owner_cursor():
+    runtime, original, window = request_case("native")
+    window["action"] = "prepare"
+    cursor = dict(original["cursor"], owner="a" * 64, entry=1, field="record")
+    runtime.source_request(original["descriptor"], cursor)
+    with pytest.raises(ValueError):
+        runtime.source_request(original["descriptor"], cursor, layout=window)
+
+
 def prepared_case(monkeypatch, **options):
     run, request, window, events, golden, reg, qualification = flow_case(
         "native", monkeypatch, **options
@@ -239,3 +248,31 @@ def test_admitted_native_owner_regenerates_original_export_on_new_tick(monkeypat
     assert "queue_layout_bind" not in [op for op, _ in session.calls]
     if pending:
         assert "queue_layout_prepare" not in [op for op, _ in session.calls]
+
+
+def test_changed_prepared_body_after_binding_cannot_be_written(monkeypatch):
+    from cognitive_castle.migration_coordinator import _layout_fixture_tick
+
+    session, _ = native_session(monkeypatch)
+    original_source, original_store = session.layout_source, session.store
+    responses = []
+
+    def source(*args):
+        result = original_source(*args)
+        responses.append(result)
+        return result
+
+    def store(directory, operation, arguments):
+        result = original_store(directory, operation, arguments)
+        if operation == "queue_layout_bind":
+            responses[0]["export"]["entries"][0]["text"] += "changed after binding"
+        return result
+
+    session.layout_source, session.store = source, store
+    result = _layout_fixture_tick(session, session.reg)
+    assert result["status"] == "conflict" and result["phase"] == "source"
+    assert [op for op, _ in session.calls] == [
+        "queue_layout_resume",
+        "layout_source",
+        "queue_layout_bind",
+    ]

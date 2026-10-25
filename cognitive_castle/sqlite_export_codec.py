@@ -134,7 +134,9 @@ def layout_result(descriptor, before, window, inner, plans):
     from .lance_layout_codec import SOURCE_RESULT, validate_layout_source_result
 
     ok = inner["status"] == "ok"
-    exported = inner if ok and (window["action"] == "export" or inner["complete"]) else None
+    exported = (
+        inner if ok and (window["action"] in {"export", "prepare"} or inner["complete"]) else None
+    )
     result = dict(
         format=SOURCE_RESULT,
         status=inner["status"],
@@ -146,6 +148,10 @@ def layout_result(descriptor, before, window, inner, plans):
         plans=plans if ok else [],
         export=exported,
     )
+    if window["action"] == "prepare":
+        from .migration_codec import hashed
+
+        result["preparation_hash"] = hashed([plans, exported]) if ok and plans else None
     validate_layout_source_result(result, window, descriptor, before)
     frame_bytes(result)
     return result

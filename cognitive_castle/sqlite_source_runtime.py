@@ -61,6 +61,8 @@ def source_refusal(request, result):
             plans=[],
             export=None,
         )
+        if request["layout"]["action"] == "prepare":
+            wrapped["preparation_hash"] = None
         frame_bytes(wrapped)
         return wrapped
     return dict(

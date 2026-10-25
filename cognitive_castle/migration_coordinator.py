@@ -116,39 +116,46 @@ def _layout_admit_owner(session, registration, state, context, before, refused):
     from . import lance_layout_codec as layout
 
     if context["plan"] is not None:
-        return context["target"], None
-    window = _layout_window(context, "plan", [])
+        return context["target"], None, None
+    action = "prepare" if registration["format"] == codec.NATIVE_FORMAT else "plan"
+    window = _layout_window(context, action, [])
     ready = session._ready()
     if ready is not None:
-        return None, refused(ready, "plan")
+        return None, refused(ready, "plan"), None
     result = session.layout_source(registration["descriptor"], before, window)
     if not isinstance(result, dict) or result.get("status") != "ok":
-        return None, refused(
-            result if isinstance(result, dict) else {"status": "unavailable"}, "plan"
+        return (
+            None,
+            refused(result if isinstance(result, dict) else {"status": "unavailable"}, "plan"),
+            None,
         )
     try:
         layout.validate_layout_source_result(result, window, registration["descriptor"], before)
     except (ValueError, KeyError, TypeError):
-        return None, refused({"status": "conflict", "reason": "layout_owner_plan"}, "plan")
+        return None, refused({"status": "conflict", "reason": "layout_owner_plan"}, "plan"), None
     ready = session._ready()
     if ready is not None:
-        return None, refused(ready, "bind")
+        return None, refused(ready, "bind"), None
     generation = Path(registration["destination"])
     if not result["plans"]:
         terminal = result["export"]
-        return None, session.store(
-            generation,
-            "queue_layout_ack",
-            dict(
-                job_id=registration["job_id"],
-                intent_id=None,
-                verified_summary=dict(
-                    state="snapshot_export_exhausted",
-                    cursor_before=before,
-                    cursor_after=terminal["cursor_after"],
-                    coverage=terminal["coverage"],
+        return (
+            None,
+            session.store(
+                generation,
+                "queue_layout_ack",
+                dict(
+                    job_id=registration["job_id"],
+                    intent_id=None,
+                    verified_summary=dict(
+                        state="snapshot_export_exhausted",
+                        cursor_before=before,
+                        cursor_after=terminal["cursor_after"],
+                        coverage=terminal["coverage"],
+                    ),
                 ),
             ),
+            None,
         )
     bound = session.store(
         generation,
@@ -160,8 +167,10 @@ def _layout_admit_owner(session, registration, state, context, before, refused):
         ),
     )
     if not isinstance(bound, dict) or bound.get("status") != "ok":
-        return None, refused(
-            bound if isinstance(bound, dict) else {"status": "unavailable"}, "bind"
+        return (
+            None,
+            refused(bound if isinstance(bound, dict) else {"status": "unavailable"}, "bind"),
+            None,
         )
     try:
         if (
@@ -176,8 +185,23 @@ def _layout_admit_owner(session, registration, state, context, before, refused):
         ):
             raise ValueError("native placement target")
     except (ValueError, KeyError, TypeError):
-        return None, refused({"status": "conflict", "reason": "layout_owner_target"}, "bind")
-    return target, None
+        return None, refused({"status": "conflict", "reason": "layout_owner_target"}, "bind"), None
+    return target, None, result if action == "prepare" else None
+
+
+def _layout_prepared_export(response, context, registration, before, *, prepared):
+    """Rebind tick-local source bytes after actual placement, never a cache."""
+    from . import lance_layout_codec as layout
+
+    if not prepared:
+        return response
+    layout.validate_layout_source_result(
+        response, _layout_window(context, "prepare", []), registration["descriptor"], before
+    )
+    result = dict(response)
+    del result["preparation_hash"]
+    result.update(action="export", cursor_after=response["export"]["cursor_after"])
+    return result
 
 
 def _layout_check_owners(session, generation, pending, exported, version, refused):
@@ -240,8 +264,9 @@ def _layout_fixture_tick(session, registration):
         return refused({"status": "conflict", "reason": "layout_pending_contract"}, "open")
     if state["state"] == "snapshot_export_exhausted":
         return state["last_ack"]["result"]
+    prepared_source = None
     if pending is None:
-        target, failure = _layout_admit_owner(
+        target, failure, prepared_source = _layout_admit_owner(
             session, registration, state, context, before, refused
         )
         if failure is not None:
@@ -252,12 +277,19 @@ def _layout_fixture_tick(session, registration):
     if ready is not None:
         return refused(ready, "source")
     window = _layout_window(context, "export", target["owner_plan_hashes"])
-    response = session.layout_source(registration["descriptor"], before, window)
+    response = prepared_source
+    if response is None:
+        response = session.layout_source(registration["descriptor"], before, window)
     if not isinstance(response, dict) or response.get("status") != "ok":
         return refused(
             response if isinstance(response, dict) else {"status": "unavailable"}, "source"
         )
     try:
+        # Tick-local bytes only. Recheck the association after placement,
+        # then require the ordinary export contract for the actual target.
+        response = _layout_prepared_export(
+            response, context, registration, before, prepared=prepared_source is not None
+        )
         layout.validate_layout_source_result(response, window, registration["descriptor"], before)
         exported = response["export"]
         regenerated = layout.prepare_layout_interval(registration, exported, target)

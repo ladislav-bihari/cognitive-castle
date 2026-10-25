@@ -843,6 +843,7 @@ def test_native_source_layout_wrapper_keeps_original_address_and_text(tmp_path):
     from cognitive_castle.canonical_records import _hash, _json
     from test_native_source_export import artifact_fingerprint
 
+    first_call = _CALLS
     source, generation, registration, _ = _setup(tmp_path, native=True)
     source_before = artifact_fingerprint(source["descriptor"])
     assert len(source["rows"]) == 1
@@ -851,6 +852,8 @@ def test_native_source_layout_wrapper_keeps_original_address_and_text(tmp_path):
     assert original["text_hash"] == _hash(expected_text)
     published, observed = _tick(registration)
     assert published["status"] == "ok", published
+    assert observed.calls.count("layout_source:1") == 1 and "layout_source:2" not in observed.calls
+    assert observed.arguments["layout_source:1"][2]["action"] == "prepare"
     planned = observed.results["layout_source:1"]["plans"]
     assert len(planned) == 1
     assert planned[0]["source_key"] == [_json(original["following"])]
@@ -897,4 +900,5 @@ def test_native_source_layout_wrapper_keeps_original_address_and_text(tmp_path):
     for key in ("counts", "completed_frontier", "owner_references", "semantic_pending"):
         assert final[key] == state[key]
     assert artifact_fingerprint(source["descriptor"]) == source_before
+    assert _CALLS - first_call == 16
     assert not {"sqlite3", "lance", "pyarrow", "numpy"}.intersection(sys.modules)
