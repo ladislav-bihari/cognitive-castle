@@ -1,0 +1,849 @@
+{
+  "base": "7715b5164a68951ff0ea37633d0364d2e02d2a93",
+  "exact_caps": {
+    "read": [
+      192,
+      256,
+      2
+    ],
+    "session_seconds": 5,
+    "write": [
+      192,
+      256,
+      3
+    ]
+  },
+  "files": [
+    {
+      "path": "cognitive_castle/__init__.py",
+      "bytes": 146,
+      "sha256": "71e9d9626a6a8241f76047916949a0254a128de07450d2c46245f4cbddfa225f"
+    },
+    {
+      "path": "cognitive_castle/__main__.py",
+      "bytes": 82,
+      "sha256": "6a9d196cb30587e9ae0b02dce99ed363d175547be0661616132a72b06a7a2bd5"
+    },
+    {
+      "path": "cognitive_castle/_vendor/__init__.py",
+      "bytes": 76,
+      "sha256": "6c374b8ee06ce9cf0bffb6e0516abd968c3eef5856a023d0858d8b3bf22191b2"
+    },
+    {
+      "path": "cognitive_castle/_vendor/sue/__init__.py",
+      "bytes": 68,
+      "sha256": "ccef62f2265a002cf1d4ca01de5a5de451a3c1f2610edf2821444281038d6e94"
+    },
+    {
+      "path": "cognitive_castle/_vendor/sue/sue_challenge.py",
+      "bytes": 66579,
+      "sha256": "d4b1d64878a44d2dc922881c68286bf4820bc6a0679868f22ef1fb6747172482"
+    },
+    {
+      "path": "cognitive_castle/_vendor/sue/sue_dialectic.py",
+      "bytes": 36535,
+      "sha256": "ba0523c407f0b96d269412c7f02dd371165944cfe044b8143be526022ae05da0"
+    },
+    {
+      "path": "cognitive_castle/_vendor/sue/sue_lenses.py",
+      "bytes": 6393,
+      "sha256": "b26d4c60d95420e2c06eabff6c933df2a25093a6a35ecfe0b07b5cc5b84064ed"
+    },
+    {
+      "path": "cognitive_castle/_vendor/sue/sue_runner.py",
+      "bytes": 20754,
+      "sha256": "3b133597c88bf37d13e9ecae34a68fbd5dad0815cdcdc8431b7625f46c7ac74c"
+    },
+    {
+      "path": "cognitive_castle/backends/__init__.py",
+      "bytes": 1653,
+      "sha256": "b4d845c71092595015980fb401923cd8ace3ebaf62138fd7114ac36e673515ec"
+    },
+    {
+      "path": "cognitive_castle/backends/_utils.py",
+      "bytes": 2362,
+      "sha256": "46d61c47a60eeb5ccd5f5941fa84c0761b6d7d8da097fc9b02b889587267836a"
+    },
+    {
+      "path": "cognitive_castle/backends/base.py",
+      "bytes": 12388,
+      "sha256": "310e6328ea56ef433284498a2d6b35ef53786c444dedc2edf5728347785f295a"
+    },
+    {
+      "path": "cognitive_castle/backends/lancedb_backend.py",
+      "bytes": 32906,
+      "sha256": "6c8f390abd07ca8792f93504dee9522ee659f53b30ed97dcaeb6813c2c8ce469"
+    },
+    {
+      "path": "cognitive_castle/backends/registry.py",
+      "bytes": 5991,
+      "sha256": "84810138e5eabbccda94eec0683e32a9799f227dbe98eac62e03b0d762fd1885"
+    },
+    {
+      "path": "cognitive_castle/bounded_json.py",
+      "bytes": 7641,
+      "sha256": "10cb182d02ab13aabb19a33beeacc9ee8bd74394ad90855673ad82503999fad6"
+    },
+    {
+      "path": "cognitive_castle/brain_api.py",
+      "bytes": 38616,
+      "sha256": "86efc92ee44dff5d8ef17558711885dcbe113518934f3997c3c842b0ad2d783e"
+    },
+    {
+      "path": "cognitive_castle/brain_engine.py",
+      "bytes": 4183,
+      "sha256": "9a4e903ff6a3e39cb2723168b740c9746fa789033ebf4c3f6a36aa6fee545cd3"
+    },
+    {
+      "path": "cognitive_castle/brain_loop.py",
+      "bytes": 70411,
+      "sha256": "d6f3ec0a45b3bb859f2dec414c5530c4837deace4949982eefdafad1738b6d5f"
+    },
+    {
+      "path": "cognitive_castle/brain_reader.py",
+      "bytes": 12100,
+      "sha256": "eb97a724e5799716283b2e10e275d935bfa9b634eed31ebf9cafe4f4fc69aef8"
+    },
+    {
+      "path": "cognitive_castle/brain_reader_guardian.py",
+      "bytes": 11821,
+      "sha256": "4ad6df39ee2b046114ce993d3645979a53e8ea21ccb0cef1c7c109a5bba822e1"
+    },
+    {
+      "path": "cognitive_castle/brain_sources.py",
+      "bytes": 9610,
+      "sha256": "adbea64836e8f14e62fbfb1b51cc366ec4e23c219f6ee5adda0a0c0a44fa3f34"
+    },
+    {
+      "path": "cognitive_castle/bulk_exact_codec.py",
+      "bytes": 14386,
+      "sha256": "268d554f60340ca61e012fd137b839e11495e8f0dc34fc17225f9dd575133a3c"
+    },
+    {
+      "path": "cognitive_castle/bulk_exact_store.py",
+      "bytes": 42654,
+      "sha256": "8346bcdd6cb639ccb289f041df547c9d0f7acfb1c0a649c24a22fd7cc58032ee"
+    },
+    {
+      "path": "cognitive_castle/bulk_owner_stream.py",
+      "bytes": 14469,
+      "sha256": "6560ab766d06c02f2bfd9a24765cba1c24039f62843ea61a2138c00a3092f9ed"
+    },
+    {
+      "path": "cognitive_castle/canonical_records.py",
+      "bytes": 5775,
+      "sha256": "1bfa0ef4514d0ebcc6e0051f5bee09e596a5151a653b3b84434d723c98ef6d6a"
+    },
+    {
+      "path": "cognitive_castle/cli.py",
+      "bytes": 66995,
+      "sha256": "bf125c515738404adc938b8b36694e947fded7b6a124b27feb523e6e64cdd905"
+    },
+    {
+      "path": "cognitive_castle/closet_llm.py",
+      "bytes": 12101,
+      "sha256": "5d1a84b41653eff39687ac556710e900860e2187a2be855c6829e19bfd127003"
+    },
+    {
+      "path": "cognitive_castle/codex_hooks.py",
+      "bytes": 6346,
+      "sha256": "e045b7061754f0a4fb66c3414711fac82ee7812deb28d8623b59254aff4ab75f"
+    },
+    {
+      "path": "cognitive_castle/config.py",
+      "bytes": 35132,
+      "sha256": "16935a7c19ea770d7c946886e635ccb0d86ad10514f6efce7cdf7e5a14b99c25"
+    },
+    {
+      "path": "cognitive_castle/convo_miner.py",
+      "bytes": 16962,
+      "sha256": "96cfab6be9c87a4e3c7bbb8295ea92cc24416dd8b3ef680f1bbea04afecf0073"
+    },
+    {
+      "path": "cognitive_castle/convo_scanner.py",
+      "bytes": 5260,
+      "sha256": "36d4e93bd51b9cd19e6f1ed0f831e8c37bf1573c218206f9174bbe9b9d6fd740"
+    },
+    {
+      "path": "cognitive_castle/corpus_origin.py",
+      "bytes": 17045,
+      "sha256": "19fd1720afd816b1de2dbe39b7369f48821e0d3b1f090fdb25ba60b17555bc01"
+    },
+    {
+      "path": "cognitive_castle/dedup.py",
+      "bytes": 8193,
+      "sha256": "b0d96361f1f17af510228ee8e79c952be00738ff193c0d0877569daec327e338"
+    },
+    {
+      "path": "cognitive_castle/dialect.py",
+      "bytes": 34404,
+      "sha256": "1c76e221124eb9fa46579eb96957c4d3b916eb07b0b9dca6acbb8e98d665f0e0"
+    },
+    {
+      "path": "cognitive_castle/diary_ingest.py",
+      "bytes": 7747,
+      "sha256": "0e18dae8683eb7ca6a3acb00352bc42cc89ebfdfa4949207c86ed1e36a9f0a47"
+    },
+    {
+      "path": "cognitive_castle/embedding.py",
+      "bytes": 6071,
+      "sha256": "ded85983167ca6550e3a5d93cf2ab5fe11053ad27bc682b0f6c9179d794c639c"
+    },
+    {
+      "path": "cognitive_castle/entity_detector.py",
+      "bytes": 25611,
+      "sha256": "c5e297d290cf7756d66d84e93a9560012cb94a28f5cd1fbb41633d8199db4402"
+    },
+    {
+      "path": "cognitive_castle/entity_registry.py",
+      "bytes": 29994,
+      "sha256": "164db7fb9f7628dd1f98b9c02479f4c71ea970ad008059a0073df72cffaac79b"
+    },
+    {
+      "path": "cognitive_castle/entrypoint.py",
+      "bytes": 1372,
+      "sha256": "2e606e6dbbb36a840ec1d3ff1a3748d160af7b17252b0a0166f70d833822eec8"
+    },
+    {
+      "path": "cognitive_castle/exporter.py",
+      "bytes": 6235,
+      "sha256": "b58bb0a13be93b7da739b839a07829e261b460a6f97afdc5b97aee569d75d046"
+    },
+    {
+      "path": "cognitive_castle/fact_checker.py",
+      "bytes": 12550,
+      "sha256": "2450bed8bb044980f996d6f354be9fbf9c304e23546592c09f5f6fa6b4aead7a"
+    },
+    {
+      "path": "cognitive_castle/fast_memory.py",
+      "bytes": 23799,
+      "sha256": "7a251a009afcd584b1401984a267a14918348ae5d9316d1693a1cbe324ca23f1"
+    },
+    {
+      "path": "cognitive_castle/fusion.py",
+      "bytes": 6133,
+      "sha256": "cc5edbb4e62338326f28cafcab87bf6cf5dd2cd4bee5ae40304b99571097a604"
+    },
+    {
+      "path": "cognitive_castle/general_extractor.py",
+      "bytes": 14067,
+      "sha256": "3326a9750badd57ee90c34d55da922e942b78bc916dd0552d29a94727b9b8f52"
+    },
+    {
+      "path": "cognitive_castle/historical_export_evidence.py",
+      "bytes": 2239,
+      "sha256": "32be251789c60818c1df8e0401d1081f63149c89d5ff2e97080fe91376af6740"
+    },
+    {
+      "path": "cognitive_castle/history_cli.py",
+      "bytes": 1942,
+      "sha256": "8abc53ebe6d949cf45b0649a6fe677c58a85f8eef10c8406c57fac0552f0c17a"
+    },
+    {
+      "path": "cognitive_castle/history_projection.py",
+      "bytes": 7948,
+      "sha256": "c53c68b7ac3aed06cc650f6f7da1c310d2cd51db3a81d3b39b4dd23b19a1ddaf"
+    },
+    {
+      "path": "cognitive_castle/history_storage.py",
+      "bytes": 5460,
+      "sha256": "c7a023e797ce3a45e8343e0fd46120ca898b962a4c887fe148282b9185ab9490"
+    },
+    {
+      "path": "cognitive_castle/hooks_cli.py",
+      "bytes": 36609,
+      "sha256": "963212e0d9d8ae3c7cc94d56885c93ea87e7dca2ddb769291ca648300b852c1d"
+    },
+    {
+      "path": "cognitive_castle/i18n/__init__.py",
+      "bytes": 10550,
+      "sha256": "8a659e858a9d7d4b3da89e3bedbfe0f0c6e45568cc6318022e11f29d0ad79c33"
+    },
+    {
+      "path": "cognitive_castle/info_score.py",
+      "bytes": 4398,
+      "sha256": "4befdc7bd90572475d5f3b39a20d784b478ff04383b91d6b4381399f4fe75878"
+    },
+    {
+      "path": "cognitive_castle/info_stats.py",
+      "bytes": 17427,
+      "sha256": "3649bd65e688258b49f95b0aa92d0c8294c3e4b21da4e13466215d90493e8c68"
+    },
+    {
+      "path": "cognitive_castle/instructions_cli.py",
+      "bytes": 868,
+      "sha256": "23ea9ea747cb580141de9d946ceaaf79a549bb22f0095d09212369bad5c94a4e"
+    },
+    {
+      "path": "cognitive_castle/judge.py",
+      "bytes": 4909,
+      "sha256": "87242c5d5a42733e8c9fc318c24ac5b9fa329eae54981401034154751a11352e"
+    },
+    {
+      "path": "cognitive_castle/kg_enricher.py",
+      "bytes": 15117,
+      "sha256": "5d56e5b77a5fcd4e2b3ced2fc38965255d5aaba63588e43f936e5265de05fb74"
+    },
+    {
+      "path": "cognitive_castle/knowledge_graph.py",
+      "bytes": 19703,
+      "sha256": "ecb0c447c96a797b7d066d847aa9550c964012920499035c0c3d0f8ba809dd0b"
+    },
+    {
+      "path": "cognitive_castle/lance_exact_store.py",
+      "bytes": 18164,
+      "sha256": "031194765e2ecebb526b6a0a6ad658c3cefe9fba4fbdcc7d8a8ea67211a9a65e"
+    },
+    {
+      "path": "cognitive_castle/lance_exact_worker.py",
+      "bytes": 5629,
+      "sha256": "9e31ccbe59c0c4ebeece7fdc695029348ffe400ad1ddcd93ecf1219f17947946"
+    },
+    {
+      "path": "cognitive_castle/lance_layout_codec.py",
+      "bytes": 42679,
+      "sha256": "f0c66cd824e84f1f35ed635a880880be0426d6168461722a3bc4d8f7e22be193"
+    },
+    {
+      "path": "cognitive_castle/lance_layout_directory.py",
+      "bytes": 81283,
+      "sha256": "438990061654c149229c590addba03d425768356e5155c5cd35a767b01aa0052"
+    },
+    {
+      "path": "cognitive_castle/lance_vector_store.py",
+      "bytes": 25171,
+      "sha256": "9f12783b7698438310d95a7a54e5d7ce75881895c3562ede6d731e5caba87710"
+    },
+    {
+      "path": "cognitive_castle/layers.py",
+      "bytes": 17266,
+      "sha256": "3d356c218ff230cdcabc5c264f371ac1b0c17c9ce9d7cc01a767e4daea0aea0f"
+    },
+    {
+      "path": "cognitive_castle/llm_client.py",
+      "bytes": 19301,
+      "sha256": "14c271f6ec55c3d48346825f6042bae12db6a57af78e1864bd2da2986124d1b4"
+    },
+    {
+      "path": "cognitive_castle/llm_refine.py",
+      "bytes": 18108,
+      "sha256": "54165b0e2a96aff72a706c7b17d05532ce3266ef7018ba1a2b49110ffe8fb0e5"
+    },
+    {
+      "path": "cognitive_castle/mcp_server.py",
+      "bytes": 86100,
+      "sha256": "b119f9a61eb59e489be6e4b90114c5010c0ae93bb8192126207c955415d8a6dc"
+    },
+    {
+      "path": "cognitive_castle/memory_accounting.py",
+      "bytes": 6878,
+      "sha256": "819b0d8160ea5f042917400f415b49111e4f2afa060c94f00584e9f7214ba168"
+    },
+    {
+      "path": "cognitive_castle/memory_capture.py",
+      "bytes": 17528,
+      "sha256": "3709bb05f14f5042be666be63e5d025d820683307783aaf2ffc4696fa76c2498"
+    },
+    {
+      "path": "cognitive_castle/memory_context.py",
+      "bytes": 14940,
+      "sha256": "d8f998074677a513166b3dd3329b40b1d723728d174b47e0c9dc868f969f9bb8"
+    },
+    {
+      "path": "cognitive_castle/memory_coordinator.py",
+      "bytes": 25361,
+      "sha256": "7b16c7376b66c836a4304658cd759212214b1d296ac64c6bf003a681e6428143"
+    },
+    {
+      "path": "cognitive_castle/memory_discovery.py",
+      "bytes": 9227,
+      "sha256": "825783a397fae41be4c35d9211c20e508360daef304401a2791b4dd3f8230973"
+    },
+    {
+      "path": "cognitive_castle/memory_history.py",
+      "bytes": 105385,
+      "sha256": "dd2bca80f36671ec4ef651cdcffb7396930b691a82db0eda9ba66198b0177314"
+    },
+    {
+      "path": "cognitive_castle/memory_history_worker.py",
+      "bytes": 3564,
+      "sha256": "fbdec786cccd43fb44bba740b17b728a2b7970190901e1356d676ed324b5ce03"
+    },
+    {
+      "path": "cognitive_castle/memory_ingest.py",
+      "bytes": 18218,
+      "sha256": "50a08a4d355da5fd775c4fd11e65821ac095db64709c8fdca352a3f87fdc3fda"
+    },
+    {
+      "path": "cognitive_castle/memory_runtime.py",
+      "bytes": 22578,
+      "sha256": "299ec818712af6684057b3ee194ddbe515c5b4ff256629c2fd414f5f2892d2e8"
+    },
+    {
+      "path": "cognitive_castle/memory_scope_indexes.py",
+      "bytes": 14661,
+      "sha256": "c84af27ef02ece2fc61a8210ad7003c5640d95d61eeec0baafda7c83fb1ffd02"
+    },
+    {
+      "path": "cognitive_castle/memory_worker.py",
+      "bytes": 5741,
+      "sha256": "33b64d19b6845ef243e48f035f54ada9ef1dc8a74393413a900446a1f0f4f095"
+    },
+    {
+      "path": "cognitive_castle/migration_codec.py",
+      "bytes": 20109,
+      "sha256": "c4f044ac58b348e83f6a1c2214e01394c9868b84c87b1d0a5ed118b8150324ae"
+    },
+    {
+      "path": "cognitive_castle/migration_coordinator.py",
+      "bytes": 24614,
+      "sha256": "222a9618bee76d8636b125bc4093e7c06c2c293da71ae4e9f72bab9878721d5c"
+    },
+    {
+      "path": "cognitive_castle/miner.py",
+      "bytes": 47524,
+      "sha256": "fd3525b3910f82083e179e9b88538c8c09d1e8384609bcde2dffcaba014a1fb0"
+    },
+    {
+      "path": "cognitive_castle/native_export_codec.py",
+      "bytes": 10208,
+      "sha256": "b308de647bccfa9a9c36618c94910e7de39ea6cfc2d5a6fe0fce6f0afb4901c8"
+    },
+    {
+      "path": "cognitive_castle/native_source_export.py",
+      "bytes": 23272,
+      "sha256": "b7bb762caf09ffba4df916368d071eb8838bc98f8b819913bf8ad18b5efa2125"
+    },
+    {
+      "path": "cognitive_castle/native_source_runtime.py",
+      "bytes": 839,
+      "sha256": "9d995159763bf6a43eb97d3bc2dfffc360d17aa6d210019a983941bebc998f5c"
+    },
+    {
+      "path": "cognitive_castle/native_source_worker.py",
+      "bytes": 3244,
+      "sha256": "4999a9f9bbaad594cece4d4e0b0aad89093596e7f6d1ffdb884d1531f1bd3722"
+    },
+    {
+      "path": "cognitive_castle/normalize.py",
+      "bytes": 26589,
+      "sha256": "d7150dc152bca8d38bd6141e2d46a79c4fe29e6e982e1666a83a8603afcb809c"
+    },
+    {
+      "path": "cognitive_castle/novelty_tagger.py",
+      "bytes": 5816,
+      "sha256": "85b560d8a7441f8635d44977bb8cf72069cbccc00ca8ed633a873db24803cc4d"
+    },
+    {
+      "path": "cognitive_castle/onboarding.py",
+      "bytes": 18800,
+      "sha256": "47c65278c83a9b03d69bf09551483ceaf9fb67363807295555ea956d5f980724"
+    },
+    {
+      "path": "cognitive_castle/optimize.py",
+      "bytes": 13284,
+      "sha256": "1ff5de8433572c6479187843b50568349b3c213aef88e29db3216a66c0a0f350"
+    },
+    {
+      "path": "cognitive_castle/palace.py",
+      "bytes": 15380,
+      "sha256": "0bdb594d68205180799b203351986ebf4be1e7bc589ed934b3a48f61bac65e27"
+    },
+    {
+      "path": "cognitive_castle/palace_graph.py",
+      "bytes": 26754,
+      "sha256": "ade5bd948a3d01f8fa872e584478e5341f8405b52e874dfab09db4427f3d0bef"
+    },
+    {
+      "path": "cognitive_castle/partitioned_exact_store.py",
+      "bytes": 41697,
+      "sha256": "b9d394ff5078b06e760b3c54c57f8f82a6835d4947b956848c7ebd7d3f593c21"
+    },
+    {
+      "path": "cognitive_castle/persisted_replay.py",
+      "bytes": 5292,
+      "sha256": "58bdfa067bdaf86cad83e4b70aaccf6da4263ba1ff84462ef45f96377ad78189"
+    },
+    {
+      "path": "cognitive_castle/project_scanner.py",
+      "bytes": 24863,
+      "sha256": "7f569d6fd1a0684885b570d2b787da0a1559784369fad700e06a86beadc46b6e"
+    },
+    {
+      "path": "cognitive_castle/prune_revisions.py",
+      "bytes": 12238,
+      "sha256": "b52b0af63d8ba4e05d8b52f27cb9ecbb1a4d842be585e3abdc1838790a5a4572"
+    },
+    {
+      "path": "cognitive_castle/prune_suggest.py",
+      "bytes": 6024,
+      "sha256": "b73fb77bb2b1baa072561b3cddd03381e855ef45f116537b489f4060bc286ddf"
+    },
+    {
+      "path": "cognitive_castle/quality_rerank.py",
+      "bytes": 7556,
+      "sha256": "7afc1c958480126c05b64fd91f48c0e8b5dacfaa9909e3fc20065017b77471ea"
+    },
+    {
+      "path": "cognitive_castle/query_intent.py",
+      "bytes": 3333,
+      "sha256": "070c9250c7642af2f2312701da55d6fc5eecce335b68223423299d4003c85a34"
+    },
+    {
+      "path": "cognitive_castle/query_sanitizer.py",
+      "bytes": 7241,
+      "sha256": "c9e11ba2a3083002692511348565873bae8e13060ae7567bb941f5c30564a05d"
+    },
+    {
+      "path": "cognitive_castle/repair.py",
+      "bytes": 11509,
+      "sha256": "a0d96bd65deeae3f58dae001b926e3dc8a51f8d44306298a37d4c5e1c1430137"
+    },
+    {
+      "path": "cognitive_castle/reranker.py",
+      "bytes": 4325,
+      "sha256": "645b793ef173050e1484bac55fcdd6e9d0bc17b6cf0b477dc69dbce8dd9761ca"
+    },
+    {
+      "path": "cognitive_castle/room_detector_local.py",
+      "bytes": 11012,
+      "sha256": "ea43973bed3040ec4c330b2eed36d29375522451bb8df4eaf2f5531812e82859"
+    },
+    {
+      "path": "cognitive_castle/rules/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cognitive_castle/searcher.py",
+      "bytes": 31124,
+      "sha256": "17532429bc429c91c0c56deed3c7d391b6f81c85eabe5d98129e73eb785a0232"
+    },
+    {
+      "path": "cognitive_castle/semantic_indexer.py",
+      "bytes": 11634,
+      "sha256": "23dda5a78ac873b775402f81490bf074774ea36bdcc141a0f2fb5bbd52b3b28e"
+    },
+    {
+      "path": "cognitive_castle/semantic_intents.py",
+      "bytes": 4373,
+      "sha256": "75e5559df2946c22d8e769db8a882bb7a79458e8b99d3ab32c6f0003f545162b"
+    },
+    {
+      "path": "cognitive_castle/semantic_profile.py",
+      "bytes": 7246,
+      "sha256": "e1dcba01d54e426bf7308e5b8e06073d2e17fc0b73064162bfa597751732ccb6"
+    },
+    {
+      "path": "cognitive_castle/semantic_queue.py",
+      "bytes": 38529,
+      "sha256": "77f2b7479908c99d48daf786bd6f83e882a94b8aad0230a7ef0e209c956d3b34"
+    },
+    {
+      "path": "cognitive_castle/semantic_runtime.py",
+      "bytes": 13118,
+      "sha256": "eb02df8403c1820349bff4957c8226f00173a0dd5b76669ea055fce84729ca39"
+    },
+    {
+      "path": "cognitive_castle/semantic_store_worker.py",
+      "bytes": 7314,
+      "sha256": "ab9261e9827c0a15b6d37f03280bb81a3f3d39c5a7245f5e36bca2b1d0f93264"
+    },
+    {
+      "path": "cognitive_castle/semantic_windows.py",
+      "bytes": 10407,
+      "sha256": "c3e80490cdf5b9a4c92dd0b7370fc4e5002bfbd6d4620da969a11fdb04c74542"
+    },
+    {
+      "path": "cognitive_castle/semantic_worker.py",
+      "bytes": 9028,
+      "sha256": "d7de3d9e7e1cd8cd1ef52803235af6b7b35cdb2b7ec79683d1d69b58873f9b5d"
+    },
+    {
+      "path": "cognitive_castle/share.py",
+      "bytes": 6429,
+      "sha256": "ffe34b0a8075c800f0246f70b77859abf41cb032bf391cd1dcc5bd12dbf32227"
+    },
+    {
+      "path": "cognitive_castle/soar_bridge.py",
+      "bytes": 409,
+      "sha256": "9f15f8e57276fed9ec9f02aef7507bdb73610a70237ea3ddb1e7d4eb9250f2a7"
+    },
+    {
+      "path": "cognitive_castle/sources/__init__.py",
+      "bytes": 1983,
+      "sha256": "5353ae8eb91be48156166f2c42ddf7c5158e9dc39ed04f61cb8cfe9e0ba70d33"
+    },
+    {
+      "path": "cognitive_castle/sources/base.py",
+      "bytes": 8530,
+      "sha256": "6910792f91fbc87192d0e332bf6bf11e962ac15c82f63095dec8b84c658c19cb"
+    },
+    {
+      "path": "cognitive_castle/sources/context.py",
+      "bytes": 6175,
+      "sha256": "df43b62fa041db715e8114a64db62418ba17574f2eaf56fb048a52eccd6a9523"
+    },
+    {
+      "path": "cognitive_castle/sources/registry.py",
+      "bytes": 5144,
+      "sha256": "bd5a27dbe383ec88e76de013f38c20b1e3f9efa5a09e4c71fbadf78dfc3471b9"
+    },
+    {
+      "path": "cognitive_castle/sources/transforms.py",
+      "bytes": 7864,
+      "sha256": "20eda9f2f8b9dc8d3dc6dab46daf365d03df7641daaea1f67c8fb0b456ce9143"
+    },
+    {
+      "path": "cognitive_castle/spellcheck.py",
+      "bytes": 10413,
+      "sha256": "938461699dee4772b1b9eec74124e3b6a31c75a8db61213c3d9df48140b991b4"
+    },
+    {
+      "path": "cognitive_castle/split_mega_files.py",
+      "bytes": 11311,
+      "sha256": "e5403f5a727291630b9da81b94c1a1d8956b66b5102efb771b634bcef82c8ded"
+    },
+    {
+      "path": "cognitive_castle/sqlite_export_codec.py",
+      "bytes": 7513,
+      "sha256": "876b021f499d638af6e0ef11ec43193fe3b07c018969c368a48cc042dcb2f881"
+    },
+    {
+      "path": "cognitive_castle/sqlite_source_export.py",
+      "bytes": 52907,
+      "sha256": "3552e24c672f6a39d2bbba180c4143972d6f52785979de38a1ad140371abffc1"
+    },
+    {
+      "path": "cognitive_castle/sqlite_source_runtime.py",
+      "bytes": 4917,
+      "sha256": "717aa0f0efef2d189e95069700a3594eead15fae63d4ea2f10fc970867f75bc4"
+    },
+    {
+      "path": "cognitive_castle/sqlite_source_worker.py",
+      "bytes": 2345,
+      "sha256": "8c00fcf85cc0f528e9bf8a5abc40244fe6660958ef437b40d7ec1d71472e289e"
+    },
+    {
+      "path": "cognitive_castle/sue.py",
+      "bytes": 11874,
+      "sha256": "f3b91924a98a13f7a34e3f131e727e091d745f58eee38e89d6c80af9157fb3c1"
+    },
+    {
+      "path": "cognitive_castle/sue_worker.py",
+      "bytes": 10708,
+      "sha256": "1d04c2e6b17f42b020f4748d9d233c8d4ecb7e470dc80536c77f46baff1254e3"
+    },
+    {
+      "path": "cognitive_castle/sweeper.py",
+      "bytes": 13100,
+      "sha256": "58b6dcedf7c7aa785f54bb8a12953bfa881b9f492856f5dfd243aaa4bf3b8ec5"
+    },
+    {
+      "path": "cognitive_castle/symbolic_rules.py",
+      "bytes": 4859,
+      "sha256": "71d2886b0d602ca5cbce3f01ce7541b97b25dd1426013f687144c723441ce397"
+    },
+    {
+      "path": "cognitive_castle/understanding/__init__.py",
+      "bytes": 2604,
+      "sha256": "6719187db0b1c5e0262cab5cfdb1c9874c8fc19da064dd5930551db69ed4d179"
+    },
+    {
+      "path": "cognitive_castle/understanding/article_metrics.py",
+      "bytes": 18421,
+      "sha256": "65049e120e1a75fa540f31955f4945973eebc42779a0b84b96297f6052838216"
+    },
+    {
+      "path": "cognitive_castle/understanding/article_worker.py",
+      "bytes": 2165,
+      "sha256": "e0169c6e91ecd7f92977b96e5dd3c8c4348713f37328dc2664aa6a8bcee845fb"
+    },
+    {
+      "path": "cognitive_castle/understanding/behavioral_metrics.py",
+      "bytes": 12468,
+      "sha256": "b2c05e5ac3e42cd699d47329a4c7249d9993759b9333289322085a20937963a3"
+    },
+    {
+      "path": "cognitive_castle/understanding/cli.py",
+      "bytes": 60408,
+      "sha256": "9f7a06172080fa4605bc09733c1a3b63b8c8fd93180d1b0a688f8588a3d0b403"
+    },
+    {
+      "path": "cognitive_castle/understanding/constraint_metrics.py",
+      "bytes": 8883,
+      "sha256": "b4e3a966f27f915042e27c8c6a8e8798900575803187da25decc338d4df8279d"
+    },
+    {
+      "path": "cognitive_castle/understanding/depth_metrics.py",
+      "bytes": 4930,
+      "sha256": "f1e4f8b52d78bb2f46b7751d273bb4f7409ac307b366adc5f538e17ba58162e2"
+    },
+    {
+      "path": "cognitive_castle/understanding/energy_metrics.py",
+      "bytes": 10591,
+      "sha256": "3a902a24ceaea93e522c76161ca6528cebd0ec4ea35a7d62525ecec4a6d74a28"
+    },
+    {
+      "path": "cognitive_castle/understanding/enhanced_metrics.py",
+      "bytes": 15225,
+      "sha256": "e35d83d2c97a2a0bec0d68fef8b35334f0606ca2371d755bd582dc0f2c801a92"
+    },
+    {
+      "path": "cognitive_castle/understanding/entity_metrics.py",
+      "bytes": 11845,
+      "sha256": "a386fd8722ec19b929b5a45f53993c3a6d024b8f14803a0ab4294bbac5465812"
+    },
+    {
+      "path": "cognitive_castle/understanding/markdown_parser.py",
+      "bytes": 3896,
+      "sha256": "f9e5b650c0a1d534f3cbfd1dab812d8acb95c6bf66e9fae9a5c423792c3514a5"
+    },
+    {
+      "path": "cognitive_castle/understanding/nlp_runtime.py",
+      "bytes": 873,
+      "sha256": "5f9beaace2d309f3cf4fbbafa0daac74f4299ba8480d54afbf6e335640678767"
+    },
+    {
+      "path": "cognitive_castle/understanding/normalized_metrics.py",
+      "bytes": 19880,
+      "sha256": "f002fecca687c887b5b5827b187c4bfa5d10f0251802f5a3a8c22bba1c74d92a"
+    },
+    {
+      "path": "cognitive_castle/understanding/requirements_metrics.py",
+      "bytes": 28441,
+      "sha256": "480079770736b041d902719fb93714fba30ee33002f3092a754cf840cfd29ccc"
+    },
+    {
+      "path": "cognitive_castle/understanding/semantic_metrics.py",
+      "bytes": 15710,
+      "sha256": "cf79910a3f45401a8a3d0cac3966d9c3e6a40da8d08584ba79bdbe65c9d48af3"
+    },
+    {
+      "path": "cognitive_castle/unified_memory.py",
+      "bytes": 43649,
+      "sha256": "9d2141ada22aecf1cb1b7ac25a7a1ada96601271775a00d314571faf75db9c9e"
+    },
+    {
+      "path": "cognitive_castle/version.py",
+      "bytes": 94,
+      "sha256": "74d603146a99a3dd692878c0472a33a05eb3c613739d93d2a23c8dd3563a5711"
+    },
+    {
+      "path": "scripts/safe_brain_tests.py",
+      "bytes": 6276,
+      "sha256": "7499bc48dd521966557c67fdf7c14a13c6bcc008785f878036fe1ce74b2e3f11"
+    },
+    {
+      "path": "tests/test_layout_native_integration.py",
+      "bytes": 38486,
+      "sha256": "f93932456cf18762d777ab7c403904fd231129829f1115297d2f32411387d611"
+    },
+    {
+      "path": "tests/test_sqlite_source_export.py",
+      "bytes": 43159,
+      "sha256": "1c64f92b715bfa8fd9100ff6b5aab2b3b9fdec92ba7343c9efb91edfd94e21fc"
+    },
+    {
+      "path": "tests/test_native_source_export.py",
+      "bytes": 26217,
+      "sha256": "02c808b7eee85f7e1aee9b4339db5edbc6b6ffd74358a85a85166dfb787a18bb"
+    },
+    {
+      "path": "tests/test_layout_source_preparation.py",
+      "bytes": 11956,
+      "sha256": "b4df216dac56ef1a6801420e786536db6f87c0a27d3f4e5a3d9bcbd82434f6b6"
+    },
+    {
+      "path": "tests/test_partition_lookup_proof.py",
+      "bytes": 6645,
+      "sha256": "4659918a699e81c5851b84bbd1a3185578c5bf1f9292f2f1f67f5a018bca8eff"
+    }
+  ],
+  "fixture_storage": "Exact _qualification construction is frozen by the fixture SHA; immutable generation identities/hash are constructed only by that trusted script and independently bound in operator argv. Two homes per generation,32MiB logical/allocated each,9MiB total temporary ceiling including4MiB working; no production capacity claim.",
+  "format": "task3-exact-tail-proof-reuse-remote-v1",
+  "minimum_free_bytes": 3221225472,
+  "omitted": "Passed firstfive, maintenance, underestimated, retained-temp, foreign-stage, legacyparity, Task1/2 are not rerun. Coalescing/fullcapacity/public integration/installed activation remain separate.",
+  "queue_caps": {
+    "heap_mib": 16,
+    "read": [
+      128,
+      192,
+      2
+    ],
+    "write": [
+      128,
+      192,
+      3
+    ]
+  },
+  "scopes": [
+    {
+      "id": "exact_tail",
+      "node": "tests/test_layout_native_tail.py::test_native_layout_exact_tail_refuses_then_bootstraps_and_resumes_original_interval",
+      "starts": 47,
+      "ticks": 6,
+      "timeout": 54,
+      "rss_mib": 256,
+      "basetemp": "ci-layout-native-results/exact_tail/pytest"
+    }
+  ],
+  "source_caps": {
+    "native": [
+      512,
+      640,
+      2
+    ],
+    "native_setup": [
+      512,
+      640,
+      5
+    ],
+    "sqlite": [
+      128,
+      192,
+      2
+    ]
+  },
+  "status": "FROZEN_GREEN_PASSED_NOT_RUN",
+  "stop": "First failed/refused case stops all remaining cases. Native starts and per-stage/session caps unchanged; no automatic retry. Unknown ACK stays unknown.",
+  "total_code_bytes": 2502167,
+  "total_outer_seconds": 54,
+  "total_starts": 47,
+  "versions": {
+    "pytest": "9.0.3",
+    "psutil": "7.2.2",
+    "pylance": "4.0.1",
+    "pyarrow": "24.0.0",
+    "numpy": "2.4.4"
+  },
+  "scheduling": "Fresh isolated hosted VM; same-call pressure1(.5s), three free locks,3GiBfree, absent base before exec. No retry. No local/native or real palace access.",
+  "accounting": "One failed exact-tail case requalified after demonstrated row-level repeated IO fix.47starts6ticks54s256MiB; original case5.8s+54s<60s. Prior tail92starts38.9s plus47starts54s totals139starts92.9s, below original150 module starts and150s wall allowance. No passed or closed cases rerun.",
+  "changes_from_failed_v1": "Dedicated existing-only queue_layout_resume (write3s128/192/heap16) replaces initial state read; strictschema5 authority; source/exact/remainingqueue profiles unchanged. Fixture only2 captured operation names updated. Split original120s sqlite4 budget into20+25+20+55; native1 remains30s. Oldfailure retained.",
+  "evidence": {
+    "prior_failure_result": "task3-five-sqlite4-native-root-result.json",
+    "recovery_product_review": "d190777cae7101d4fb6962ecab55cdc74c867349c1cbf29b5f83b893f52f0494",
+    "recovery_actual_acceptance": "a55698960ae323d4541fae6027d6e10ad0e2915e557fcc1f4586b77c6e58b9a0",
+    "prior_functional_failure": "task3-five-v2-first_live-result.json",
+    "live_receipt_review": "ec7c2f5fa55d287293b874c524e78a03ea8601231d0cfd4f5bc284e422c6fb19"
+  },
+  "changes_from_failed_v2": "Only private LIVE receipt gate corrected to require LIVE classification and original namespace/key source_key. Chunk memory-ID field semantics and actual native proof/versions/visibility unchanged. Same5cases127starts, sum150s guard budgets, allcapsunchanged. Failedv2write/pending andnoACK evidence retained.",
+  "source_commit": "13df35676d08e4c59a0ccf4309f5d6e0475f0541",
+  "pure_evidence_run": 40226396113,
+  "remote_runner": "macos-15 arm64",
+  "retention": "One complete128MiB/2048entry/depth10 case tree plus16MiB metadata; full144MiB/4096entry cap; complete TAR retained without DB reopen.",
+  "limitations": "Remote synthetic qualification only; user Mac timing/fullcorpus/activation remain unverified.",
+  "changes_from_local_v3": "Prior remote40224307858 qualified4SQLitecases and failed native source grouped proof atshared5s; noACKattempt. Closed native prepare now uses one source view and same original export before validated placement; code/root design reviewed; actual pureRED40224771989. All original exact/grouped/queue/runtime profiles remain unchanged.",
+  "python_version": "3.12.10",
+  "setup_correction": "Python3.12.10 is pinned available arm64 build; installed3.12.11 remains unqualified.",
+  "first_five_evidence": [
+    40224307858,
+    40225083901
+  ],
+  "maintenance_evidence": [
+    40225199601,
+    40225614397
+  ],
+  "lookup_change": "Only actual local batch proof and geometry reused within one bounded _lookup_rows call. Every row hash still checked; actual evidence re-read on next call. No source/fixture/profile/queue changes.",
+  "failed_evidence_run": 40225770998
+}
