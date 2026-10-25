@@ -35,6 +35,323 @@ def _native_fixture_tick(session, registration):
     return _tick(session, registration, native=True)
 
 
+def _layout_replay(session, generation, arguments, pending):
+    from . import lance_layout_codec as layout
+
+    for attempt in range(2):
+        phase = "publish" if attempt == 0 else "verify_replay"
+        ready = session._ready()
+        if ready is not None:
+            return None, ready, phase
+        result = session.exact(generation, "layout_import_batch", arguments)
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            return None, result if isinstance(result, dict) else {"status": "unavailable"}, phase
+        try:
+            if result.keys() != {"status", "format", "outcome", "receipt", "routes"}:
+                raise ValueError("layout batch envelope")
+            for key in ("records", "published_owners", "entries"):
+                codec.bulk.integer(result["receipt"][key])
+            if result["format"] != layout.BATCH_RESULT or result[
+                "receipt"
+            ] != layout.expected_receipt(pending):
+                raise ValueError("layout batch receipt")
+            if result["outcome"] == "existing_verified":
+                return {k: v for k, v in result.items() if k != "status"}, None, None
+            if result["outcome"] != "fresh_append" or result["routes"] != [] or attempt:
+                raise ValueError("layout existing replay required")
+        except (ValueError, KeyError, TypeError):
+            return None, {"status": "conflict", "reason": "layout_replay_contract"}, phase
+    raise AssertionError("closed replay outcomes")
+
+
+def _layout_window(context, action, hashes):
+    from . import lance_layout_codec as layout
+
+    return dict(
+        format=layout.SOURCE_REQUEST,
+        action=action,
+        generation=context["generation"],
+        qualification_hash=context["qualification_hash"],
+        allowed_plan_hashes=hashes,
+        packing=layout.PACKING,
+    )
+
+
+def _layout_context(state, registration):
+    from . import lance_layout_codec as layout
+
+    attached = state["layout"]
+    layout._fields(attached, {"format", "envelope_hash", "envelope"}, "layout attachment")
+    envelope = layout.validate_envelope(attached["envelope"])
+    if attached["format"] != layout.ATTACHMENT or attached["envelope_hash"] != codec.hashed(
+        envelope
+    ):
+        raise ValueError("layout attachment")
+    context = state["native_layout"]
+    layout._fields(
+        context,
+        {"format", "generation", "qualification_hash", "epoch", "plan", "target"},
+        "native layout context",
+    )
+    if (
+        context["format"] != "lance-layout-native-context-v1"
+        or context["generation"] != envelope["generation"]
+        or context["generation"]["path"] != registration["destination"]
+        or context["qualification_hash"] != envelope["qualification_hash"]
+    ):
+        raise ValueError("native registered context")
+    layout.bulk.sha(context["epoch"])
+    if context["plan"] is None:
+        if context["target"] is not None:
+            raise ValueError("unplanned native target")
+    else:
+        plan = layout.validate_owner_plan(context["plan"], registration)
+        target = layout.validate_target(context["target"])
+        if target != layout.target(envelope, target["partition_id"], [plan]):
+            raise ValueError("registered owner target")
+    return context
+
+
+def _layout_admit_owner(session, registration, state, context, before, refused):
+    from . import lance_layout_codec as layout
+
+    if context["plan"] is not None:
+        return context["target"], None
+    window = _layout_window(context, "plan", [])
+    ready = session._ready()
+    if ready is not None:
+        return None, refused(ready, "plan")
+    result = session.layout_source(registration["descriptor"], before, window)
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return None, refused(
+            result if isinstance(result, dict) else {"status": "unavailable"}, "plan"
+        )
+    try:
+        layout.validate_layout_source_result(result, window, registration["descriptor"], before)
+    except (ValueError, KeyError, TypeError):
+        return None, refused({"status": "conflict", "reason": "layout_owner_plan"}, "plan")
+    ready = session._ready()
+    if ready is not None:
+        return None, refused(ready, "bind")
+    generation = Path(registration["destination"])
+    if not result["plans"]:
+        terminal = result["export"]
+        return None, session.store(
+            generation,
+            "queue_layout_ack",
+            dict(
+                job_id=registration["job_id"],
+                intent_id=None,
+                verified_summary=dict(
+                    state="snapshot_export_exhausted",
+                    cursor_before=before,
+                    cursor_after=terminal["cursor_after"],
+                    coverage=terminal["coverage"],
+                ),
+            ),
+        )
+    bound = session.store(
+        generation,
+        "queue_layout_bind",
+        dict(
+            job_id=registration["job_id"],
+            plans=result["plans"],
+            envelope=state["layout"]["envelope"],
+        ),
+    )
+    if not isinstance(bound, dict) or bound.get("status") != "ok":
+        return None, refused(
+            bound if isinstance(bound, dict) else {"status": "unavailable"}, "bind"
+        )
+    try:
+        if (
+            bound.keys() != {"status", "layout", "targets"}
+            or bound["layout"] != state["layout"]
+            or len(bound["targets"]) != 1
+        ):
+            raise ValueError("native placement response")
+        target = layout.validate_target(bound["targets"][0])
+        if target != layout.target(
+            state["layout"]["envelope"], target["partition_id"], result["plans"]
+        ):
+            raise ValueError("native placement target")
+    except (ValueError, KeyError, TypeError):
+        return None, refused({"status": "conflict", "reason": "layout_owner_target"}, "bind")
+    return target, None
+
+
+def _layout_check_owners(session, generation, pending, exported, version, refused):
+    for owner in exported["finalizations"]:
+        ready = session._ready()
+        if ready is not None:
+            return refused(ready, "owner")
+        observed = session.exact(
+            generation,
+            "layout_read",
+            dict(
+                operation="bulk_owner",
+                arguments=dict(owner=owner["owner"], version=version),
+                context=dict(intent_id=pending["intent_id"], version=version),
+            ),
+        )
+        if not isinstance(observed, dict) or observed.get("status") != "ok":
+            return refused(
+                observed if isinstance(observed, dict) else {"status": "unavailable"}, "owner"
+            )
+        try:
+            if observed.get("manifest") != owner or _owner_version(observed, version) != version:
+                raise ValueError("layout owner proof")
+        except (ValueError, KeyError, TypeError):
+            return refused({"status": "conflict", "reason": "layout_owner_contract"}, "owner")
+        live = owner["live"]
+        if live is not None:
+            ready = session._ready()
+            if ready is not None:
+                return refused(ready, "live_receipt")
+            receipt = session.exact(
+                generation,
+                "layout_read",
+                dict(
+                    operation="receipt",
+                    arguments=dict(namespace=live["namespace"], key=live["key"]),
+                    context=dict(intent_id=pending["intent_id"], version=version),
+                ),
+            )
+            if not isinstance(receipt, dict) or receipt.get("status") != "ok":
+                return refused(
+                    receipt if isinstance(receipt, dict) else {"status": "unavailable"},
+                    "live_receipt",
+                )
+            if receipt != dict(status="ok", digest=live["digest"], receipt=live["receipt"]):
+                return refused(
+                    {"status": "conflict", "reason": "layout_live_receipt"}, "live_receipt"
+                )
+    return None
+
+
+def _layout_fixture_tick(session, registration):
+    """Private single-owner layout protocol; authority stays in registered stores."""
+    from . import lance_layout_codec as layout
+
+    codec.validate_registration(registration)
+    generation = Path(registration["destination"])
+    state = session.store(generation, "queue_layout_resume", {"registration": registration})
+    if not isinstance(state, dict) or state.get("status") != "ok":
+        return state if isinstance(state, dict) else {"status": "unavailable"}
+    if state.get("registration") != registration or "layout" not in state:
+        return {"status": "unavailable", "reason": "layout_registration", "phase": "open"}
+    pending = state["pending"]
+    before = state["staging_cursor"]
+
+    def refused(result, phase):
+        return dict(
+            status=result.get("status", "unavailable"),
+            reason=result.get("reason"),
+            phase=phase,
+            intent_id=pending["intent_id"] if pending else None,
+            cursor_before=before,
+            cursor_after=before,
+            coverage="incomplete",
+        )
+
+    try:
+        context = _layout_context(state, registration)
+        codec.cursor(before, registration)
+        if pending is not None:
+            codec.validate_pending(pending, registration, state["layout"])
+        if pending is not None and pending["cursor_before"] != before:
+            raise ValueError("registered pending target")
+    except (ValueError, KeyError, TypeError):
+        return refused({"status": "conflict", "reason": "layout_pending_contract"}, "open")
+    if state["state"] == "snapshot_export_exhausted":
+        return state["last_ack"]["result"]
+    if pending is None:
+        target, failure = _layout_admit_owner(
+            session, registration, state, context, before, refused
+        )
+        if failure is not None:
+            return failure
+    else:
+        target = pending["target"]
+    ready = session._ready()
+    if ready is not None:
+        return refused(ready, "source")
+    window = _layout_window(context, "export", target["owner_plan_hashes"])
+    response = session.layout_source(registration["descriptor"], before, window)
+    if not isinstance(response, dict) or response.get("status") != "ok":
+        return refused(
+            response if isinstance(response, dict) else {"status": "unavailable"}, "source"
+        )
+    try:
+        layout.validate_layout_source_result(response, window, registration["descriptor"], before)
+        exported = response["export"]
+        regenerated = layout.prepare_layout_interval(registration, exported, target)
+        if pending is not None and regenerated != pending:
+            raise ValueError("layout regeneration")
+    except (ValueError, KeyError, TypeError):
+        return refused({"status": "conflict", "reason": "layout_regeneration"}, "source")
+    if pending is None:
+        ready = session._ready()
+        if ready is not None:
+            return refused(ready, "prepare")
+        prepared = session.store(
+            generation,
+            "queue_layout_prepare",
+            dict(job_id=registration["job_id"], expected_cursor=before, intent=regenerated),
+        )
+        if prepared != {"status": "ok", "intent_id": regenerated["intent_id"]}:
+            return refused(
+                prepared
+                if isinstance(prepared, dict) and prepared.get("status") != "ok"
+                else {"status": "conflict", "reason": "layout_prepare_response"},
+                "prepare",
+            )
+        pending = regenerated
+    arguments = dict(
+        intent_id=pending["intent_id"],
+        batch_id=pending["intent_id"],
+        source_binding=registration["source_binding"],
+        entries=exported["entries"],
+        finalizations=exported["finalizations"],
+    )
+    batch, failure, phase = _layout_replay(session, generation, arguments, pending)
+    if failure is not None:
+        return refused(failure, phase)
+    try:
+        # Validate every route before using its version or issuing an owner read.
+        for route in batch["routes"]:
+            layout.validate_route(route)
+        if not batch["routes"]:
+            raise ValueError("missing durable batch route")
+        version = layout.positive(batch["routes"][-1]["version"])
+        proofs = [
+            dict(
+                owner=o["owner"],
+                manifest_hash=o["manifest_hash"],
+                partition_id=pending["target"]["partition_id"],
+                version=version,
+                live_receipt_ids=o["live_receipt_ids"],
+            )
+            for o in pending["owners"]
+        ]
+        summary = layout.verified_summary(pending, batch, proofs)
+    except (ValueError, KeyError, TypeError, IndexError):
+        return refused({"status": "conflict", "reason": "layout_replay_contract"}, "verify_replay")
+    failure = _layout_check_owners(session, generation, pending, exported, version, refused)
+    if failure is not None:
+        return failure
+    ready = session._ready()
+    if ready is not None:
+        return refused(ready, "ack")
+    return session.store(
+        generation,
+        "queue_layout_ack",
+        dict(
+            job_id=registration["job_id"], intent_id=pending["intent_id"], verified_summary=summary
+        ),
+    )
+
+
 def _source(session, registration, cursor, *, native):
     if native:
         return session.native_source(registration["descriptor"], cursor)

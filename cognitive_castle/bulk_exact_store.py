@@ -184,7 +184,7 @@ def visible_source(store, dataset, row):
         return record.source()
     owner = row["digest"]
     pointer = json.loads(row["receipt"])
-    found = lookup_many(dataset, [owner, pointer["page"]])
+    found = store._lookup_rows(dataset, [owner, pointer["page"]])
     if owner not in found:
         raise _StoreError("not_found")
     manifest = decode_receipt(found[owner])
@@ -207,11 +207,15 @@ def visible_source(store, dataset, row):
 
 
 class BulkExactStore(LanceExactStore):
+    def _coverage(self, dataset):
+        """Default geometry; private registered stores may require stricter coverage."""
+        return coverage(dataset)
+
     def _verify_owner(self, dataset, manifest, pending):
         """Stream original text/field SHA256, never digest-of-page-digests."""
 
         def fetch(ids):
-            found = lookup_many(dataset, [i for i in ids if i not in pending], checked=True)
+            found = self._lookup_rows(dataset, [i for i in ids if i not in pending], checked=True)
             found.update({i: pending[i] for i in ids if i in pending})
             if any(i not in found for i in ids):
                 raise _StoreError("corrupt")
@@ -294,7 +298,7 @@ class BulkExactStore(LanceExactStore):
         live_ids, expected_live_ids = set(), set()
         for start in range(0, len(manifest["proof"]), LOOKUP_IDS):
             proof = manifest["proof"][start : start + LOOKUP_IDS]
-            found = lookup_many(dataset, [i for i, _ in proof], checked=True)
+            found = self._lookup_rows(dataset, [i for i, _ in proof], checked=True)
             for identity, digest in proof:
                 prior = found.get(identity)
                 if prior is None or _hash(_json(prior)) != digest:
@@ -363,8 +367,8 @@ class BulkExactStore(LanceExactStore):
         receipt_id = codec.key("batch", batch_id)
         try:
             with self._writer() as dataset:
-                coverage(dataset)
-                old = lookup_many(dataset, [receipt_id], checked=True).get(receipt_id)
+                self._coverage(dataset)
+                old = self._lookup_rows(dataset, [receipt_id], checked=True).get(receipt_id)
                 if old is not None:
                     manifest = self._verify_batch(dataset, old)
                     if manifest["digest"] != digest or manifest["source_binding"] != source_binding:
@@ -400,7 +404,7 @@ class BulkExactStore(LanceExactStore):
                         if legacy_id in candidates and candidates[legacy_id] != row:
                             raise _StoreError("conflict")
                         candidates[legacy_id] = row
-                found = lookup_many(dataset, candidates, checked=True)
+                found = self._lookup_rows(dataset, candidates, checked=True)
                 pending = {}
                 for identity, row in candidates.items():
                     prior = found.get(identity)
@@ -464,7 +468,7 @@ class BulkExactStore(LanceExactStore):
                 if dataset.count_rows() > MAX_INDEX_ROWS:
                     raise _StoreError("maintenance_limit")
                 dataset.create_scalar_index("id", "BTREE", name=INDEX_NAME, replace=True)
-                result = coverage(self._open())
+                result = self._coverage(self._open())
             return {"status": "ok", "lookup": result}
         except _StoreError as exc:
             return {"status": exc.status}
@@ -480,14 +484,14 @@ class BulkExactStore(LanceExactStore):
             raise _StoreError("not_initialized")
         if version is not None and dataset.version != version:
             raise _StoreError("stale")
-        info = coverage(dataset)
+        info = self._coverage(dataset)
         return dataset, info
 
     def bulk_owner(self, owner, *, version=None):
         codec.identity(owner)
         try:
             dataset, info = self._read(version=version)
-            row = lookup_many(dataset, [owner], checked=True).get(owner)
+            row = self._lookup_rows(dataset, [owner], checked=True).get(owner)
             if row is None:
                 raise _StoreError("not_found")
             manifest = decode_receipt(row)
@@ -508,7 +512,7 @@ class BulkExactStore(LanceExactStore):
         identity = codec.page_id(owner, field, ordinal)
         try:
             dataset, info = self._read(version=version)
-            found = lookup_many(dataset, [owner, identity], checked=True)
+            found = self._lookup_rows(dataset, [owner, identity], checked=True)
             if owner not in found:
                 raise _StoreError("not_found")
             manifest = decode_receipt(found[owner])
@@ -541,7 +545,7 @@ class BulkExactStore(LanceExactStore):
         try:
             dataset, info = self._read(version=version)
             identity = codec.key("batch", batch_id)
-            row = lookup_many(dataset, [identity], checked=True).get(identity)
+            row = self._lookup_rows(dataset, [identity], checked=True).get(identity)
             if row is None:
                 raise _StoreError("not_found")
             manifest = self._verify_batch(dataset, row)
@@ -587,6 +591,7 @@ class OrderedBulkExactStore(BulkExactStore):
         # mkdir. The fixed fixture setup precreates and binds this private home.
         q = self.qualification
         exact._require_supervision()
+        self._check_namespace_access()
         for path in [self.directory, *self.directory.parents]:
             if path.is_symlink():
                 raise _StoreError("unavailable")
@@ -793,7 +798,7 @@ class OrderedBulkExactStore(BulkExactStore):
             or self._artifacts["file_bytes"] > reserve["file_bytes"]
         ):
             raise _StoreError("unavailable")
-        info = coverage(dataset)
+        info = self._coverage(dataset)
         if (
             info["tail_rows"] + len(rows) > MAX_TAIL_ROWS
             or info["tail_fragments"] + 1 > MAX_TAIL_FRAGMENTS
@@ -930,7 +935,7 @@ class OrderedBulkExactStore(BulkExactStore):
                 # Index creation mutates this handle. Opening again with the
                 # pre-operation pin would incorrectly refuse its new version.
                 self._after_maintenance(dataset)
-                result = coverage(dataset)
+                result = self._coverage(dataset)
             return {"status": "ok", "lookup": result}
         except _StoreError as exc:
             return {"status": exc.status}

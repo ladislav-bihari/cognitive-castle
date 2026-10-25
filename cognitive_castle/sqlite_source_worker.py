@@ -31,14 +31,25 @@ def main():
         if len(raw) > MAX_FRAME:
             raise ValueError("request frame")
         request = json.loads(raw)
-        if not isinstance(request, dict) or request.keys() != {"descriptor", "cursor", "_host_pid"}:
+        if not isinstance(request, dict) or request.keys() not in (
+            {"descriptor", "cursor", "_host_pid"},
+            {"descriptor", "cursor", "layout", "_host_pid"},
+        ):
             raise ValueError("request shape")
         result = _admit_storage(request)
         if result is None:
             _sqlite_heap_limit()
+            if "layout" in request:
+                from cognitive_castle.sqlite_export_codec import prepare_layout_request
+
+                prepare_layout_request(request["descriptor"], request["cursor"], request["layout"])
             from cognitive_castle.sqlite_source_export import export_slice
 
-            result = export_slice(request["descriptor"], request["cursor"])
+            result = (
+                export_slice(request["descriptor"], request["cursor"], layout=request["layout"])
+                if "layout" in request
+                else export_slice(request["descriptor"], request["cursor"])
+            )
         output = json.dumps(result, allow_nan=False).encode("ascii")
         if len(output) > MAX_FRAME:
             raise ValueError("response frame")

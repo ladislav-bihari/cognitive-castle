@@ -38,6 +38,8 @@ from .native_export_codec import (
     validate_cursor,
     validate_identity,
     validate_manifest,
+    record_entry,
+    layout_result,
 )
 
 PROJECTION_CHARACTERS = 8192
@@ -295,8 +297,9 @@ class Source:
         yield "scopes", self.scopes()
         yield "descriptor", self.descriptor_text()
 
-    def owner(self):
+    def owner(self, *, planning=None):
         self.active_operation = "owner_summary"
+        owner = bulk.owner_id(self.occurrence, self.binding)
         summaries = {}
         for field, pieces in self.fields():
             self.active_field = field
@@ -304,16 +307,23 @@ class Source:
             size = chars = count = 0
             for text in pages(pieces):
                 self.check_time()
+                if planning is not None:
+                    planning.add_entry(bulk.page(owner, field, count, text, chars, size))
                 digest.update(text.encode())
                 chars += len(text)
                 size += len(text.encode())
                 count += 1
             summaries[field] = dict(hash=digest.hexdigest(), bytes=size, chars=chars, pages=count)
-        owner = bulk.owner_id(self.occurrence, self.binding)
         membership = hashlib.sha256()
         count = 0
         for ordinal, record in enumerate(self.records()):
-            membership.update(member_text(owner, ordinal, record, summaries["scopes"]).encode())
+            member = member_text(owner, ordinal, record, summaries["scopes"])
+            if planning is not None:
+                planning.add_entry(
+                    bulk.page(owner, "membership", ordinal, member, ordinal, ordinal)
+                )
+                planning.add_entry(record_entry(owner, ordinal, record))
+            membership.update(member.encode())
             count += 1
         return bulk.validate_owner(
             dict(
@@ -371,8 +381,9 @@ class Source:
             )
 
 
-def _export_owner(source, result, cursor):
-    owner = source.owner()
+def _export_owner(source, result, cursor, *, owner=None):
+    if owner is None:
+        owner = source.owner()
     start = cursor["entry"] if cursor["owner"] is not None else 0
     after = initial_cursor(source.binding, source.descriptor["store_id"], source.raw_before)
     source.active_operation = "emit_entries"
@@ -458,7 +469,7 @@ def _normalize_refusal(result, before, source):
     )
 
 
-def export_slice(descriptor, cursor):
+def export_slice(descriptor, cursor, *, layout=None):
     source = Source(descriptor)
     validate_cursor(cursor, source.binding, descriptor["store_id"], descriptor["start_cursor"])
     before = dict(cursor)
@@ -477,11 +488,33 @@ def export_slice(descriptor, cursor):
         coverage="incomplete",
         frame_bytes=0,
     )
+    plans = []
     try:
+        if layout is not None:
+            from .lance_layout_codec import LayoutPlanningCounters, validate_layout_source_window
+            from .lance_layout_directory import load_layout_qualification
+            from .migration_codec import registration, hashed
+
+            validate_layout_source_window(layout, descriptor, cursor)
+            qualification = load_layout_qualification(
+                layout["generation"], layout["qualification_hash"]
+            )
+            reg = registration(descriptor, layout["generation"]["path"])
+            planning = LayoutPlanningCounters(qualification)
         if cursor["phase"] == "done":
             raise Refusal("corrupt", "native_export_already_done")
         if source.open(cursor):
-            _export_owner(source, result, cursor)
+            if layout is None:
+                _export_owner(source, result, cursor)
+            else:
+                owner = source.owner(planning=planning)
+                plan = planning.finish(reg, owner, "history", [_json(source.following)])
+                source.check_time()
+                if layout["action"] == "export" and layout["allowed_plan_hashes"] != [hashed(plan)]:
+                    raise Refusal("conflict", "layout_owner_plan_mismatch")
+                plans = [plan]
+                if layout["action"] == "export":
+                    _export_owner(source, result, cursor, owner=owner)
         else:
             after = initial_cursor(
                 source.binding, descriptor["store_id"], descriptor["start_cursor"]
@@ -532,4 +565,22 @@ def export_slice(descriptor, cursor):
             except (ValueError, MemoryError):
                 result.update(status="qualification_required", reason="native_source_frame_limit")
                 _normalize_refusal(result, before, source)
+    if layout is not None:
+        return _layout_response(source, descriptor, before, layout, result, plans)
     return result
+
+
+def _layout_response(source, descriptor, before, layout, result, plans):
+    try:
+        wrapped = layout_result(descriptor, before, layout, result, plans)
+        if result["status"] == "ok":
+            source.check_time()
+        return wrapped
+    except Refusal as exc:
+        result.update(status=exc.status, reason=exc.reason)
+    except MemoryError:
+        result.update(status="qualification_required", reason="native_decode_summary_limit")
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result.update(status="qualification_required", reason="layout_source_frame_limit")
+    _normalize_refusal(result, before, source)
+    return layout_result(descriptor, before, layout, result, [])

@@ -30,6 +30,8 @@ from .sqlite_export_codec import (
     initial_cursor,
     source_binding,
     validate_cursor,
+    record_entry,
+    layout_result,
 )
 
 # Original table shapes, not a schema to install. Unknown source tables refuse.
@@ -620,7 +622,7 @@ class Source:
             return bulk.sha(key[0])
         return ("AUDIT:" if phase == "audit" else "LIVE:") + _hash(_json([phase, key]))
 
-    def owner(self, phase, key):
+    def owner(self, phase, key, *, planning=None):
         owner_key = self.owner_key(phase, key)
         owner = bulk.owner_id(owner_key, self.binding)
         summaries = {}
@@ -631,6 +633,8 @@ class Source:
             chars = size = count = 0
             for text in pages(pieces):
                 self.check_time()
+                if planning is not None:
+                    planning.add_entry(bulk.page(owner, field, count, text, chars, size))
                 digest.update(text.encode())
                 chars += len(text)
                 size += len(text.encode())
@@ -722,6 +726,11 @@ class Source:
                 ):
                     raise Refusal("corrupt", "historical_caller_binding")
             member = member_text(owner, ordinal, record, summaries["scopes"])
+            if planning is not None:
+                planning.add_entry(
+                    bulk.page(owner, "membership", ordinal, member, ordinal, ordinal)
+                )
+                planning.add_entry(record_entry(owner, ordinal, record))
             members.update(member.encode())
             whole.update(record.text.encode())
             text_chars += len(record.text)
@@ -948,10 +957,11 @@ def next_unit(source, cursor):
     return "done", None
 
 
-def _export_owner(source, result, cursor, phase, key):
-    if phase == "audit":
-        validate_audit(source, key)
-    manifest = source.owner(phase, key)
+def _export_owner(source, result, cursor, phase, key, *, manifest=None):
+    if manifest is None:
+        if phase == "audit":
+            validate_audit(source, key)
+        manifest = source.owner(phase, key)
     start = cursor["entry"] if cursor["owner"] is not None else 0
     base = initial_cursor(source.binding, source.descriptor["store_id"])
     base.update(phase=phase, key=key)
@@ -1063,7 +1073,7 @@ def _normalize_refusal(result, before, source):
     return result
 
 
-def export_slice(descriptor, cursor):
+def export_slice(descriptor, cursor, *, layout=None):
     """One private bounded replay interval; no destination progress is implied."""
     source = Source(descriptor)
     validate_cursor(cursor, source.binding, descriptor["store_id"])
@@ -1083,7 +1093,19 @@ def export_slice(descriptor, cursor):
         coverage="indexed-only",
         frame_bytes=0,
     )
+    plans = []
     try:
+        if layout is not None:
+            from .lance_layout_codec import LayoutPlanningCounters, validate_layout_source_window
+            from .lance_layout_directory import load_layout_qualification
+            from .migration_codec import registration, hashed
+
+            validate_layout_source_window(layout, descriptor, cursor)
+            qualification = load_layout_qualification(
+                layout["generation"], layout["qualification_hash"]
+            )
+            reg = registration(descriptor, layout["generation"]["path"])
+            planning = LayoutPlanningCounters(qualification)
         source.open()
         phase, key = next_unit(source, cursor)
         result["phase"] = phase
@@ -1092,6 +1114,17 @@ def export_slice(descriptor, cursor):
             after = initial_cursor(source.binding, descriptor["store_id"])
             after["phase"] = "done"
             result.update(cursor_after=after, complete=True, phase_complete=True)
+        elif layout is not None:
+            if phase == "audit":
+                validate_audit(source, key)
+            manifest = source.owner(phase, key, planning=planning)
+            plan = planning.finish(reg, manifest, phase, key)
+            source.check_time()
+            if layout["action"] == "export" and layout["allowed_plan_hashes"] != [hashed(plan)]:
+                raise Refusal("conflict", "layout_owner_plan_mismatch")
+            plans = [plan]
+            if layout["action"] == "export":
+                _export_owner(source, result, cursor, phase, key, manifest=manifest)
         else:
             _export_owner(source, result, cursor, phase, key)
         # Snapshot facts are checked both sides of *every* successful slice.
@@ -1106,7 +1139,6 @@ def export_slice(descriptor, cursor):
         for _ in range(3):
             result["frame_bytes"] = len(frame_bytes(result))
         frame_bytes(result)
-        return result
     except Refusal as exc:
         result.update(status=exc.status, reason=exc.reason)
     except MemoryError:
@@ -1137,4 +1169,22 @@ def export_slice(descriptor, cursor):
                 result.update(status="stale", reason="source_post_slice_identity")
         if result["status"] != "ok":
             _normalize_refusal(result, before, source)
+    if layout is not None:
+        return _layout_response(source, descriptor, before, layout, result, plans)
     return result
+
+
+def _layout_response(source, descriptor, before, layout, result, plans):
+    try:
+        wrapped = layout_result(descriptor, before, layout, result, plans)
+        if result["status"] == "ok":
+            source.check_time()
+        return wrapped
+    except Refusal as exc:
+        result.update(status=exc.status, reason=exc.reason)
+    except MemoryError:
+        result.update(status="qualification_required", reason="sqlite_summary_limit")
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result.update(status="qualification_required", reason="layout_source_frame_limit")
+    _normalize_refusal(result, before, source)
+    return layout_result(descriptor, before, layout, result, [])

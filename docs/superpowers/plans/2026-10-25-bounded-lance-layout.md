@@ -46,8 +46,8 @@ Keep modules focused; do not reorganize unrelated storage code.
 | New `cognitive_castle/bulk_owner_stream.py` | Engine-free ordered original-byte owner verification; no persistent state. |
 | Existing `bulk_exact_store.py`, `lance_exact_worker.py`, `semantic_runtime.py` | Pinned streaming adapter, exact maintenance/admission, fixed private layout operation dispatch and unchanged guards. |
 | New `cognitive_castle/lance_layout_codec.py` | Pure strict schemas and deterministic IDs for layout plans, targets, intents, routes and source windows. |
-| New `cognitive_castle/lance_layout_directory.py` | Derived metadata tables and bounded SQL operations using a supplied connection; safe read-only route access inside exact workers. |
-| Existing `semantic_queue.py`, `semantic_store_worker.py`, `migration_codec.py` | Extend the existing job transaction for layout prepare/ACK; retain all v1 paths and job identities. |
+| New `cognitive_castle/lance_layout_directory.py` | Derived metadata tables and bounded SQL operations using a supplied connection; safe read-only route access inside exact workers. Task 4 extends existing native binding, active-owner lifecycle, gates and bounded owner spans together for an ordered admitted prefix. |
+| Existing `semantic_queue.py`, `semantic_store_worker.py`, `migration_codec.py` | Extend the existing job transaction for layout prepare/ACK; retain all v1 paths and job identities. Task 4 preserves each owner's original source-cursor association and atomically verifies/ACKs the complete packed prefix. |
 | New `cognitive_castle/partitioned_exact_store.py` | Fixed partition paths, bounded global resolver, routed exact operations and partition maintenance. |
 | Existing `migration_coordinator.py` | Private layout tick, fixed destination recovery and same-tick proof/ACK. |
 | Existing SQLite/native source codec, runtime, worker and exporter modules | Versioned body-free owner planning and bounded source-view coalescing; default v1 behavior unchanged. |
@@ -65,7 +65,7 @@ Use JSON dictionaries on existing worker boundaries. `lance_layout_codec.py` def
 
 New fixed queue operations are `queue_layout_bind(job_id, plans, envelope)`, `queue_layout_prepare(job_id, expected_cursor, intent)`, `queue_layout_ack(job_id, intent_id, verified_summary)` and read-only `queue_layout_routes(ids)`. They use the same `queue.sqlite3` and migration job rows; layout tables store placement/reservations/routes, not a second migration job domain. Existing `queue_migration_state` returns an explicitly versioned layout attachment for a layout-enabled job; old v1 entry points refuse an attached layout job rather than misinterpreting its pending interval.
 
-Exact worker additions are `layout_import_batch(intent_id, batch_id, source_binding, entries, finalizations) -> LayoutBatchResult`, `layout_read(operation, arguments)` and `layout_maintain(partition_id)`. `layout_read` has a closed read-only whitelist of the existing `read_sources/page/receipt/bulk_owner/bulk_page/bulk_receipt` actions plus Task 3's `directory_page`; existing actions preserve their inner result contracts. Root is the registered generation, never a caller-selected partition. Task 4 adds `layout_verify_owners(intent_id)` for grouped proof. Write/replay/maintenance stages remain 3 s; all reads/grouped checks remain 2 s.
+Exact worker additions are `layout_import_batch(intent_id, batch_id, source_binding, entries, finalizations) -> LayoutBatchResult`, `layout_read(operation, arguments)` and `layout_maintain(partition_id)`. `layout_read` has a closed read-only whitelist of the existing `read_sources/page/receipt/bulk_owner/bulk_page/bulk_receipt` actions plus Task 3's `directory_page`; existing actions preserve their inner result contracts. Root is the registered generation, never a caller-selected partition. Task 4 adds `layout_verify_owners(intent_id, version)` for grouped proof. Write/replay/maintenance stages remain 3 s; all reads/grouped checks remain 2 s.
 
 ## Qualification inputs and commands
 
@@ -241,9 +241,15 @@ native visibility or resource fit; the integrated fixture must verify this gate.
 
 ### Task 4: Source-view coalescing and grouped owner verification
 
-**Files:** Modify the existing SQLite/native source codec/runtime/worker/exporter modules, `lance_layout_codec.py`, `migration_codec.py`, `migration_coordinator.py`, `partitioned_exact_store.py`, `lance_exact_worker.py`, `semantic_runtime.py`; create `tests/test_layout_source_packing.py` and extend `tests/test_layout_coordinator.py`.
+**Files:** Modify the existing SQLite/native source codec/runtime/worker/exporter modules, `lance_layout_codec.py`, `lance_layout_directory.py`, `semantic_queue.py`, `semantic_store_worker.py`, `migration_codec.py`, `migration_coordinator.py`, `partitioned_exact_store.py`, `lance_exact_worker.py`, `semantic_runtime.py`; create `tests/test_layout_source_packing.py` and extend `tests/test_layout_coordinator.py`.
 
-**Interfaces:** Extend the Task 3 `layout_source` window to a bounded ordered owner prefix already admitted to one home. Use packing `bulk-v1-ascii-layout-1` in layout envelopes only; original `PACKING` and v1 source behavior remain unchanged. Produce per-owner original phase/key/cursor associations for layout intents; do not infer every owner key from the final cursor. Add `layout_verify_owners(intent_id) -> dict` returning bounded ordered manifest hashes, pinned versions and original live receipt proof summaries, checked against the prepared intent; no whole manifests in the response. This supplements, never replaces, the actual identical import replay.
+**Interfaces:** Extend the Task 3 `layout_source` window to a bounded ordered owner prefix already admitted to one home. Use packing `bulk-v1-ascii-layout-1` in layout envelopes only; original `PACKING` and v1 source behavior remain unchanged. Produce per-owner original phase/key/cursor associations for layout intents; do not infer every owner key from the final cursor. Add `layout_verify_owners(intent_id, version) -> dict` returning bounded ordered manifest hashes, pinned versions and original live receipt proof summaries, checked against the prepared intent; no whole manifests in the response. This supplements, never replaces, the actual identical import replay. The initial single-owner slice still rejects multiple owners; the bounded ordered multi-owner extension remains required later in this task.
+
+**Dependency boundary and qualification order:** Implement the planned grouped owner/LIVE verification first for Task 3's current single-owner pending shape, before closing Task 3 qualification. The earlier failed run stopped before Lance; grouping did not explain or repair that startup failure. A subsequent actual first-LIVE v3 passed FreshAppend, separate complete Existing replay, owner read and original LIVE receipt read, then the ACK worker reached the unchanged shared five-second deadline. ACK commit is unknown; retain that failed evidence without probing or retrying it. This later failure justifies moving the planned single-owner grouping ahead of Task 3 closure, not a timing pass or waived gate. All Task 3 gates, full Task 4 multi-owner coalescing and later capacity qualification remain required.
+
+The initial closed `layout_verify_owners(intent_id, version)` operation accepts exactly one finalized owner from the actual pending intent; staging intervals skip it and multiple owners still refuse. Use one native dataset open at one fixed registered home/version, preserving the existing bounded `_context_batch` rechecks on that immutable handle. Do not add an invocation cache merely to force one receipt lookup. Reuse the actual owner and original LIVE receipt validators, return strict ordered body-free hash summaries, and compare them with freshly exported source/pending/replay evidence before the same atomic ACK. Preserve FreshAppend followed by separate actual Existing complete-byte proof; grouped lookup neither replaces it nor adds a third whole-owner scan. The grouped operation remains a read under2s/192MiB task/256MiB aggregate inside the same5s session, with original memory-ID meaning, route/remote budgets and staged visibility unchanged. No native timing or capacity acceptance follows from this amendment.
+
+Actual multi-owner coalescing must extend the existing native metadata authority together with source/intent/facade contracts: `_NativeLayoutDirectory.bind`, the active-owner lifecycle, per-row publication gates, bounded owner spans and atomic ACK must agree on the same ordered admitted prefix. Keep authoritative claims and foreign-stage refusal intact. The current source and intent shapes admit one owner and associate LIVE identity with the final cursor; packed output instead needs each owner's original phase/key/before/next association. Inherited bulk append places entries before owner markers/LIVE rows, so packed physical ordering and span/shared-scan selection must explicitly preserve each owner's original field/member/marker order. Do not merely relax single-owner guards or let unrelated owner rows pass the strict verifier. These are dependencies of the existing coalescing scope; all resource limits and proof obligations below remain unchanged.
 
 - [ ] Write RED `test_packing_is_deterministic_across_frame_phase_and_home_boundaries` and `test_packing_preserves_each_native_before_next_cursor`. Assert exact 256-entry/finalization and decoded/ASCII/full-frame bounds, one binding/phase/home, per-owner original identity/counters, and identical replay of a frozen prefix. Deadline pressure refuses without clock-dependent repacking of a pending interval.
 - [ ] Implement planning/export over one existing protected source view per worker call. Plan a bounded prefix, bind homes before export, then stop at the first home/phase/frame boundary. Reuse ephemeral first output within a tick; regenerate a pending interval from its frozen window. Preserve SQLite live/history/audit distinctions and native typed candidate/alias/raw-JSON contracts; no repeated worker/source reopen per owner.
@@ -273,3 +279,45 @@ native visibility or resource fit; the integrated fixture must verify this gate.
 For each task run `/Users/ladislavbihari/.echelon/venv/bin/ruff check` and `ruff format --check` with only that task's explicit created/modified Python files, then `git diff --check`. Stage only its listed verified product/test files and evidence; use the task's stated conventional commit message. No broad suite or rerun of unrelated green native work. Native test evidence must identify the real guarded operation, not substitute a fake boundary for publication, equality, replay or resource claims.
 
 The five review gates follow the requested sequence. No production envelope has been chosen. Root reviews the concrete diagnostic manifests before their runs and resolves any implementation deviation before it changes the reviewed contract; implementers do not use those gates to add protocols, weaken verification or grow scope.
+
+
+### Task3 correction: resume a registered layout after interrupted queue writes
+
+The first actual Task3 qualification stopped at the shared five-second deadline
+in queue preparation, before any Lance worker. Its failed evidence remains
+preserved; this correction does not turn that run into a pass. Host diagnostics
+localized substantial startup overhead but did not establish a product latency
+cause. Separately, static recovery review found a concrete liveness gap:
+`_layout_fixture_tick` starts with a read-only queue connection. An interrupted
+SQLite write can leave a hot rollback journal, which cannot be recovered through
+`mode=ro` ([SQLite result codes](https://sqlite.org/rescode.html#readonly_rollback),
+[recovery protocol](https://www.sqlite.org/lockingv3.html#hot_journals)). The failed
+fixture database has not been inspected, so no hot journal is asserted there.
+
+Add one closed internal `queue_layout_resume` operation taking the original full
+registration. It replaces the initial state call; it does not add a worker. Its
+connection is existing-file `mode=rw`, timeout0, private path validation without
+creation, fixed queue heap/cache/mmap/synchronous controls and a transaction.
+Require schema5, complete current authority, attached existing job and identical
+registration/destination/qualification before returning the same bounded state
+and native-layout context. There must be no table creation, upgrade, job insert,
+route reconstruction, claim confirmation, pending reset, source cursor/count
+advance or synthetic acknowledgement. SQLite may recover its existing journal.
+The existing legacy migration opener is deliberately unsuitable because its
+attached-job guard must remain intact.
+
+Ordinary state/status/routes and exact queries stay read-only. The recovery entry
+uses the already established queue-write profile (3s,128MiB task/192MiB aggregate,
+16MiB SQLite heap), inside the unchanged shared five-second session. No cap is
+raised. One caller refusal stops that tick; no hidden second attempt or new lease.
+A later ordinary tick may resume a bound plan or identical durable pending intent.
+Only the original durable native proof and ACK can publish or advance coverage.
+
+Verification: engine-free RED/GREEN tests for exact operation/binding, no further
+work after refusal or registration mismatch, existing-path/no-create mode, strict
+authority and unchanged read-only APIs. Prepare one small guarded disposable
+metadata crash test: real hot journal from interrupted uncommitted changes,
+registered recovery restores prior complete state, committed lost-response pending
+remains unchanged, and missing DB/job/authority cannot initialize anything. Freeze
+its finite calls/files/time separately before execution; do not reopen the failed
+qualification fixture or retry the first-five qualification automatically.

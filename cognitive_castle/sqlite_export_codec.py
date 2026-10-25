@@ -117,6 +117,62 @@ def source_binding(descriptor):
     return _hash(_json([FORMAT, "registered-source", descriptor]))
 
 
+def prepare_layout_request(descriptor, cursor, window):
+    """Explicit alternate request; v1 descriptor and cursor domains are unchanged."""
+    from .lance_layout_codec import validate_layout_source_window
+
+    binding = source_binding(descriptor)
+    validate_cursor(cursor, binding, descriptor["store_id"])
+    validate_layout_source_window(window, descriptor, cursor)
+    request = dict(descriptor=descriptor, cursor=cursor, layout=window)
+    frame_bytes(request)
+    return request
+
+
+def layout_result(descriptor, before, window, inner, plans):
+    """Wrap an unchanged v1 result; a plan never advances the source cursor."""
+    from .lance_layout_codec import SOURCE_RESULT, validate_layout_source_result
+
+    ok = inner["status"] == "ok"
+    exported = inner if ok and (window["action"] == "export" or inner["complete"]) else None
+    result = dict(
+        format=SOURCE_RESULT,
+        status=inner["status"],
+        reason=inner["reason"],
+        action=window["action"],
+        source_binding=before["source_binding"],
+        cursor_before=before,
+        cursor_after=inner["cursor_after"] if ok and window["action"] == "export" else before,
+        plans=plans if ok else [],
+        export=exported,
+    )
+    validate_layout_source_result(result, window, descriptor, before)
+    frame_bytes(result)
+    return result
+
+
+def record_entry(owner, ordinal, record):
+    """The original six-string member row, also sized during owner planning."""
+    from . import bulk_exact_codec as bulk
+
+    return bulk.validate_entry(
+        dict(
+            id=record.id,
+            kind="bulk_record",
+            text=record.text,
+            provenance=record.provenance_json,
+            digest=owner,
+            receipt=_json(
+                dict(
+                    format=bulk.FORMAT,
+                    page=bulk.page_id(owner, "membership", ordinal),
+                    ordinal=ordinal,
+                )
+            ),
+        )
+    )
+
+
 def initial_cursor(binding, store_id):
     sha(binding)
     _string(store_id, 256, "store id")

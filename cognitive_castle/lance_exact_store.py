@@ -90,6 +90,9 @@ class LanceExactStore:
 
     def _paths(self, *, create=False):
         _require_supervision()
+        self._check_namespace_access()
+        if create:
+            self._check_mutation_namespace()
         for path in [self.directory, *self.directory.parents]:
             if path.is_symlink():
                 raise _StoreError("unavailable")
@@ -113,6 +116,7 @@ class LanceExactStore:
             raise _StoreError("unavailable")
 
     def _open(self):
+        self._check_namespace_access()
         import lance
 
         path = self.directory / DATASET
@@ -132,6 +136,8 @@ class LanceExactStore:
     def _writer(self):
         if not self.writable:
             raise _StoreError("unavailable")
+        _require_supervision()
+        self._check_mutation_namespace()
         self._paths(create=True)
         fd = os.open(self.directory / ".write.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -148,9 +154,54 @@ class LanceExactStore:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise _StoreError("busy") from None
+            self._check_mutation_namespace()
             yield self._open()
         finally:
             os.close(fd)
+
+    def _check_mutation_namespace(self):
+        """Writes additionally require the facade's current mutation authority."""
+        self._check_namespace_access()
+
+    def _check_namespace_access(self):
+        """Registered homes need a private authority override for reads and writes."""
+        # Lexical normalization denies '..' aliases without following symlinks.
+        home = Path(os.path.normpath(str(self.directory)))
+        if (
+            home.parent.name.casefold() != "partitions"
+            or home.parent.parent.name.casefold() != "exact"
+            or re.fullmatch(r"0|[1-9][0-9]*", home.name) is None
+        ):
+            return
+        generation = home.parent.parent.parent
+        canonical_parent = generation / "exact/partitions"
+        if home.parent != canonical_parent:
+            # Case variants alias on common Darwin volumes, but may denote an
+            # unrelated legacy directory on a case-sensitive volume. Compare
+            # existing directory identities without authorizing through a link.
+            try:
+                for parent in (home.parent, canonical_parent):
+                    if any(path.is_symlink() for path in (parent, *parent.parents)):
+                        raise _StoreError("unavailable")
+                actual, canonical = home.parent.lstat(), canonical_parent.lstat()
+            except FileNotFoundError:
+                return
+            if (
+                not stat.S_ISDIR(actual.st_mode)
+                or not stat.S_ISDIR(canonical.st_mode)
+                or (actual.st_dev, actual.st_ino) != (canonical.st_dev, canonical.st_ino)
+            ):
+                return
+        if os.path.lexists(generation / "exact/layout-qualification.json") or os.path.lexists(
+            generation / "coordination/queue.sqlite3"
+        ):
+            raise _StoreError("unavailable")
+
+    def _lookup_rows(self, dataset, ids, *, checked=False):
+        """Instance indirection for private registered canonical routing."""
+        from .bulk_exact_store import lookup_many
+
+        return lookup_many(dataset, ids, checked=checked)
 
     @staticmethod
     def _find_many(dataset, identities):
@@ -229,7 +280,7 @@ class LanceExactStore:
             ):
                 raise ValueError("receipt ids")
             stored_records = []
-            found = self._find_many(dataset, [_identity(identity) for identity in stored_ids])
+            found = self._lookup_rows(dataset, [_identity(identity) for identity in stored_ids])
             for identity in stored_ids:
                 row = found.get(identity)
                 if row is None:
@@ -276,7 +327,7 @@ class LanceExactStore:
         receipt_id = "receipt:" + _hash(_json([namespace, key]))
         try:
             with self._writer() as dataset:
-                old = self._find(dataset, receipt_id)
+                old = self._lookup_rows(dataset, [receipt_id]).get(receipt_id)
                 if old:
                     stored, stored_records = self._verify_receipt(dataset, old, namespace, key)
                     if old["digest"] != digest:
@@ -285,7 +336,7 @@ class LanceExactStore:
                         raise _StoreError("corrupt")
                     return stored
                 rows = []
-                found = self._find_many(dataset, [record.id for record in records])
+                found = self._lookup_rows(dataset, [record.id for record in records])
                 for record in records:
                     prior = found.get(record.id)
                     if prior is not None:
@@ -339,7 +390,8 @@ class LanceExactStore:
         try:
             self._paths()
             dataset = self._open()
-            row = self._find(dataset, "receipt:" + _hash(_json([namespace, key])))
+            receipt_id = "receipt:" + _hash(_json([namespace, key]))
+            row = self._lookup_rows(dataset, [receipt_id]).get(receipt_id)
             if row is None:
                 return {"status": "not_found"}
             stored, _ = self._verify_receipt(dataset, row, namespace, key)
@@ -360,7 +412,7 @@ class LanceExactStore:
             if dataset is None:
                 raise _StoreError("not_initialized")
             sources = []
-            found = self._find_many(dataset, ids)
+            found = self._lookup_rows(dataset, ids)
             for identity in ids:
                 row = found.get(identity)
                 if row is None:

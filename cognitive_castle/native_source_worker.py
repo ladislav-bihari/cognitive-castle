@@ -55,15 +55,26 @@ def main():
         if len(raw) > MAX_FRAME:
             raise ValueError("request frame")
         request = json.loads(raw)
-        if not isinstance(request, dict) or request.keys() != {"descriptor", "cursor", "_host_pid"}:
+        if not isinstance(request, dict) or request.keys() not in (
+            {"descriptor", "cursor", "_host_pid"},
+            {"descriptor", "cursor", "layout", "_host_pid"},
+        ):
             raise ValueError("request shape")
         if type(request["_host_pid"]) is not int or request["_host_pid"] <= 0:
             raise ValueError("host identity")
         result = _admit_source(request)
         if result is None:
+            if "layout" in request:
+                from cognitive_castle.native_export_codec import prepare_layout_request
+
+                prepare_layout_request(request["descriptor"], request["cursor"], request["layout"])
             from cognitive_castle.native_source_export import export_slice
 
-            result = export_slice(request["descriptor"], request["cursor"])
+            result = (
+                export_slice(request["descriptor"], request["cursor"], layout=request["layout"])
+                if "layout" in request
+                else export_slice(request["descriptor"], request["cursor"])
+            )
         output = json.dumps(result, allow_nan=False).encode("ascii")
         if len(output) > MAX_FRAME:
             raise ValueError("response frame")

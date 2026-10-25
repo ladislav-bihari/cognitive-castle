@@ -19,6 +19,8 @@ from .sqlite_export_codec import (
     empty_counts as empty_counts,
     file_identity as file_identity,
     frame_bytes,
+    layout_result as layout_result,
+    record_entry as record_entry,
 )
 
 FORMAT = "pinned-native-export-v1"
@@ -101,6 +103,17 @@ def validate_descriptor(value):
 def source_binding(descriptor):
     validate_descriptor(descriptor)
     return _hash(_json([FORMAT, "registered-source", descriptor]))
+
+
+def prepare_layout_request(descriptor, cursor, window):
+    from .lance_layout_codec import validate_layout_source_window
+
+    binding = source_binding(descriptor)
+    validate_cursor(cursor, binding, descriptor["store_id"], descriptor["start_cursor"])
+    validate_layout_source_window(window, descriptor, cursor)
+    request = dict(descriptor=descriptor, cursor=cursor, layout=window)
+    frame_bytes(request)
+    return request
 
 
 def validate_manifest(value, descriptor):

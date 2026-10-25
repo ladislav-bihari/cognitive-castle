@@ -177,9 +177,9 @@ class SemanticQueue:
                         "CREATE TABLE acknowledgements (batch_key TEXT NOT NULL, start INTEGER NOT NULL, receipt TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(batch_key,start))"
                     )
                     conn.execute("PRAGMA user_version=1")
-                elif version not in (1, 2, 3, 4):
+                elif version not in (1, 2, 3, 4, 5):
                     raise _StoreError("corrupt")
-                if version == 4:
+                if version in (4, 5):
                     from .lance_layout_directory import LayoutDirectory
 
                     LayoutDirectory(conn)._schema()
@@ -198,21 +198,43 @@ class SemanticQueue:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS migration_owners (job_id TEXT NOT NULL, owner TEXT NOT NULL, reference TEXT NOT NULL, PRIMARY KEY(job_id,owner))"
                 )
-                if version == 4:
+                if version in (4, 5):
                     from .lance_layout_directory import require_attachment_column
 
                     require_attachment_column(conn)
                 else:
                     conn.execute("PRAGMA user_version=3")
-            elif conn.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4):
+            elif conn.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4, 5):
                 raise _StoreError("corrupt")
-            elif conn.execute("PRAGMA user_version").fetchone()[0] == 4:
+            elif conn.execute("PRAGMA user_version").fetchone()[0] in (4, 5):
                 from .lance_layout_directory import require_attachment_column
 
                 require_attachment_column(conn)
             yield conn
             if write:
                 conn.commit()
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _layout_resume_connection(self):
+        """Recover only an existing coordination DB; never initialize metadata."""
+        if not self.writable:
+            raise _StoreError("unavailable")
+        self._paths(False)
+        import sqlite3
+
+        path = self.directory / "queue.sqlite3"
+        conn = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA trusted_schema=OFF")
+            conn.execute("PRAGMA cache_size=-512")
+            conn.execute("PRAGMA mmap_size=0")
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.execute("BEGIN IMMEDIATE")
+            yield conn
+            conn.commit()
         finally:
             conn.close()
 
@@ -493,7 +515,7 @@ class SemanticQueue:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version < 3:
             raise _StoreError("not_found")
-        if version == 4:
+        if version in (4, 5):
             marker = conn.execute(
                 "SELECT length(CAST(layout_attachment AS BLOB)) FROM migration_jobs WHERE job_id=?",
                 (job_id,),
@@ -607,12 +629,59 @@ class SemanticQueue:
         validate_hash(job_id)
 
         def operation(conn):
-            from .lance_layout_directory import LayoutDirectory
+            from .lance_layout_directory import _directory
 
-            attachment = LayoutDirectory(conn).attachment(job_id)
-            return self._migration_state(self._migration_row(conn, job_id), attachment)
+            return self._layout_state(conn, job_id, _directory(conn))
 
         return self._run(False, operation)
+
+    @staticmethod
+    def _layout_state(conn, job_id, directory):
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        attachment = directory.attachment(job_id)
+        state = SemanticQueue._migration_state(
+            SemanticQueue._migration_row(conn, job_id), attachment
+        )
+        if attachment is not None and isinstance(directory, _NativeLayoutDirectory):
+            state["native_layout"] = directory.context(job_id)
+            from .migration_codec import bounded
+
+            bounded(state)
+        return state
+
+    def layout_resume(self, registration):
+        """Mutating-path recovery entry; no job/schema/authority creation."""
+        from . import migration_codec as codec
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        try:
+            codec.validate_registration(registration)
+        except codec.RegistrationConflict:
+            return {"status": "conflict"}
+        if registration["destination"] != str(self.generation):
+            return {"status": "conflict"}
+        try:
+            _require_supervision()
+        except _StoreError as exc:
+            return {"status": exc.status}
+        import sqlite3
+
+        try:
+            with self._layout_resume_connection() as conn:
+                directory = _NativeLayoutDirectory(conn)
+                if directory.attachment(registration["job_id"]) is None:
+                    raise _StoreError("unavailable")
+                state = self._layout_state(conn, registration["job_id"], directory)
+                if state["registration"] != registration:
+                    raise _StoreError("conflict")
+                return state
+        except _StoreError as exc:
+            return {"status": exc.status}
+        except sqlite3.OperationalError as exc:
+            return {"status": "busy" if "locked" in str(exc) else "unavailable"}
+        except (OSError, sqlite3.DatabaseError, ValueError, KeyError, TypeError):
+            return {"status": "unavailable"}
 
     def migration_prepare(self, job_id, expected_cursor, intent):
         from . import migration_codec as codec
@@ -817,25 +886,45 @@ class SemanticQueue:
         return result
 
     def layout_bind(self, job_id, plans, envelope):
-        from .lance_layout_directory import LayoutDirectory
+        from .lance_layout_directory import _directory
 
-        return self._run(True, lambda conn: LayoutDirectory(conn).bind(job_id, plans, envelope))
+        return self._run(True, lambda conn: _directory(conn).bind(job_id, plans, envelope))
 
     def layout_prepare(self, job_id, expected_cursor, intent):
-        from .lance_layout_directory import LayoutDirectory
+        from .lance_layout_directory import _directory
 
         return self._run(
-            True, lambda conn: LayoutDirectory(conn).prepare(job_id, expected_cursor, intent)
+            True, lambda conn: _directory(conn).prepare(job_id, expected_cursor, intent)
         )
 
     def layout_ack(self, job_id, intent_id, verified_summary):
-        from .lance_layout_directory import LayoutDirectory
+        from .lance_layout_directory import _directory
 
         return self._run(
-            True, lambda conn: LayoutDirectory(conn).ack(job_id, intent_id, verified_summary)
+            True, lambda conn: _directory(conn).ack(job_id, intent_id, verified_summary)
         )
 
     def layout_routes(self, ids):
-        from .lance_layout_directory import LayoutDirectory
+        from .lance_layout_directory import _directory
 
-        return self._run(False, lambda conn: LayoutDirectory(conn).routes(ids))
+        return self._run(False, lambda conn: _directory(conn).routes(ids))
+
+    def layout_maintenance_prepare(self, partition_id, version):
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        return self._run(
+            True,
+            lambda conn: _NativeLayoutDirectory(conn).maintenance_prepare(partition_id, version),
+        )
+
+    def layout_rebuild_prepare(self, partition_id, version):
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        return self._run(
+            True, lambda conn: _NativeLayoutDirectory(conn).rebuild_prepare(partition_id, version)
+        )
+
+    def layout_reconcile(self, page):
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        return self._run(True, lambda conn: _NativeLayoutDirectory(conn).reconcile(page))

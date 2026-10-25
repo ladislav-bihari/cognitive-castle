@@ -10,6 +10,12 @@ import sys
 
 MAX_FRAME = 512 * 1024
 _FIELDS = {
+    "layout_import_batch": (
+        {"intent_id", "batch_id", "source_binding", "entries", "finalizations"},
+        set(),
+    ),
+    "layout_read": ({"operation", "arguments"}, {"context"}),
+    "layout_maintain": ({"partition_id"}, set()),
     "import_batch": ({"batch_id", "source_binding", "entries", "finalizations"}, set()),
     "build_id_index": (set(), set()),
     "bulk_owner": ({"owner"}, {"version"}),
@@ -106,6 +112,14 @@ def _execute(request):
         raise ValueError("arguments")
     if not isinstance(request["directory"], str) or not request["directory"]:
         raise ValueError("directory")
+    if operation in {"layout_import_batch", "layout_read", "layout_maintain"}:
+        from cognitive_castle.partitioned_exact_store import PartitionedExactStore
+
+        store = PartitionedExactStore(
+            Path(request["directory"]),
+            writable=operation in {"layout_import_batch", "layout_maintain"},
+        )
+        return getattr(store, operation)(**arguments)
     store = BulkExactStore(
         Path(request["directory"]),
         writable=operation in {"remember", "import_sources", "import_batch", "build_id_index"},

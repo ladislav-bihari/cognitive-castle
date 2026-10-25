@@ -17,10 +17,14 @@ from .sqlite_export_codec import (
 )
 
 
-def source_request(descriptor, cursor=None):
+def source_request(descriptor, cursor=None, *, layout=None):
     binding = source_binding(descriptor)
     cursor = initial_cursor(binding, descriptor["store_id"]) if cursor is None else cursor
     validate_cursor(cursor, binding, descriptor["store_id"])
+    if layout is not None:
+        from .sqlite_export_codec import prepare_layout_request
+
+        return prepare_layout_request(descriptor, cursor, layout)
     request = {"descriptor": descriptor, "cursor": cursor}
     frame_bytes(request)
     return request
@@ -29,6 +33,36 @@ def source_request(descriptor, cursor=None):
 def source_refusal(request, result):
     """Normalize supervisor failures without allowing cursor/completion claims."""
     cursor = request["cursor"]
+    if "layout" in request:
+        from .lance_layout_codec import SOURCE_RESULT
+        from .canonical_records import _string
+
+        status = result.get("status", "unavailable")
+        reason = result.get("reason", "source_invalid_response")
+        try:
+            _string(status, 64, "source status")
+            if status == "ok":
+                raise ValueError("refusal status")
+        except ValueError:
+            status = "unavailable"
+        if reason is not None:
+            try:
+                _string(reason, 1024, "source reason")
+            except ValueError:
+                reason = "source_invalid_response"
+        wrapped = dict(
+            format=SOURCE_RESULT,
+            status=status,
+            reason=reason,
+            action=request["layout"]["action"],
+            source_binding=cursor["source_binding"],
+            cursor_before=cursor,
+            cursor_after=cursor,
+            plans=[],
+            export=None,
+        )
+        frame_bytes(wrapped)
+        return wrapped
     return dict(
         status=result.get("status", "unavailable"),
         reason=result.get("reason", "source_invalid_response"),
@@ -48,6 +82,25 @@ def source_refusal(request, result):
 
 
 def source_result(request, result):
+    if "layout" in request:
+        from .lance_layout_codec import validate_layout_source_result
+
+        if not isinstance(result, dict):
+            return source_refusal(
+                request, dict(status="unavailable", reason="source_invalid_response")
+            )
+        if result.get("status") != "ok":
+            return source_refusal(request, result)
+        try:
+            validate_layout_source_result(
+                result, request["layout"], request["descriptor"], request["cursor"]
+            )
+            frame_bytes(result)
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+            return source_refusal(
+                request, dict(status="unavailable", reason="source_invalid_response")
+            )
+        return result
     if "cursor_before" not in result:
         return source_refusal(request, result)
     frame_bytes({key: value for key, value in result.items() if key != "resources"})

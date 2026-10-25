@@ -21,6 +21,10 @@ ATTACHMENT = "lance-layout-attachment-v1"
 ROUTE = "lance-layout-route-v1"
 VERIFIED = "lance-layout-verified-v1"
 BATCH_RESULT = "lance-layout-batch-result-v1"
+QUALIFICATION = "lance-layout-qualification-v1"
+SOURCE_REQUEST = "lance-layout-source-request-v1"
+SOURCE_RESULT = "lance-layout-source-result-v1"
+PARTITION_PIN = "lance-layout-partition-pin-v1"
 PACKING = "bulk-v1-ascii-layout-1"
 EXPANSION = (
     "physical_rows",
@@ -104,6 +108,511 @@ def validate_envelope(value):
     positive(value["max_partitions"])
     _expansion(value["limits"])
     return migration.bounded(value)
+
+
+def validate_qualification(value, envelope, *, expected_hash):
+    """Check an independently pinned policy; this pure check grants no authority."""
+    validate_envelope(envelope)
+    validate_qualification_body(
+        value, expected_hash=expected_hash, generation=envelope["generation"]
+    )
+    if expected_hash != envelope["qualification_hash"]:
+        raise ValueError("registered qualification hash")
+    if (
+        value["max_remote_opens"] > envelope["max_partitions"]
+        or value["working_temp_bytes"] > envelope["limits"]["temp_bytes"]
+    ):
+        raise ValueError("layout qualification fanout/temp")
+    for name, expansion in (
+        ("physical_rows", "physical_rows"),
+        ("fragments", "fragments"),
+        ("versions", "versions"),
+        ("artifact_entries", "artifacts"),
+        ("logical_bytes", "retained_bytes"),
+        ("allocated_bytes", "retained_bytes"),
+        ("batch_receipts", "batches"),
+    ):
+        if value["partition"]["max_" + name] > envelope["limits"][expansion]:
+            raise ValueError("qualified partition exceeds envelope")
+    return value
+
+
+def validate_qualification_body(value, *, expected_hash, generation):
+    """Artifact consumer validation; trust comes from the registered expected hash."""
+    validate_generation(generation)
+    bulk.sha(expected_hash)
+    _fields(
+        value,
+        {
+            "format",
+            "generation",
+            "schema",
+            "storage_mode",
+            "partition",
+            "reservations",
+            "max_remote_opens",
+            "working_temp_bytes",
+            "source_cost",
+        },
+        "layout qualification",
+    )
+    if (
+        value["format"] != QUALIFICATION
+        or value["schema"] != "castle-exact-six-string-v1"
+        or value["storage_mode"] != "2.0"
+        or value["generation"] != generation
+        or migration.hashed(value) != expected_hash
+    ):
+        raise ValueError("independently registered layout qualification")
+    validate_generation(value["generation"])
+    for name in ("max_remote_opens", "working_temp_bytes"):
+        positive(value[name])
+    _qualification_limits(value)
+    cost = value["source_cost"]
+    _fields(cost, {"maintenance_every_batches", "frame_overhead_bytes"}, "layout source cost")
+    for number in cost.values():
+        positive(number)
+    if cost["maintenance_every_batches"] > 32 or cost["frame_overhead_bytes"] > 32 * 1024:
+        raise ValueError("layout source cost ceiling")
+    if (
+        max(len(_json(value).encode()), len(json.dumps(value, ensure_ascii=True).encode()))
+        > 64 * 1024
+    ):
+        raise ValueError("layout qualification bytes")
+    return value
+
+
+def _qualification_limits(value):
+    limits = value["partition"]
+    names = {
+        "physical_rows",
+        "fragments",
+        "versions",
+        "artifact_entries",
+        "artifact_depth",
+        "logical_bytes",
+        "allocated_bytes",
+        "file_bytes",
+        "batch_receipts",
+    }
+    _fields(limits, {"max_" + n for n in names}, "qualified partition limits")
+    for number in limits.values():
+        positive(number)
+    if limits["max_file_bytes"] > min(limits["max_logical_bytes"], limits["max_allocated_bytes"]):
+        raise ValueError("qualified resulting file ceiling")
+    reservations = value["reservations"]
+    _fields(reservations, {"append", "maintenance"}, "qualified operation charges")
+    charge_names = names - {"artifact_depth", "batch_receipts"}
+    for operation, charge in reservations.items():
+        _fields(charge, charge_names, "qualified operation charge")
+        for name, number in charge.items():
+            bulk.integer(number)
+            if name not in {"physical_rows", "fragments"}:
+                positive(number)
+            if number > limits["max_" + name]:
+                raise ValueError("qualified operation exceeds partition")
+        if (
+            charge["versions"] != 1
+            or charge["fragments"] != int(operation == "append")
+            or (operation == "maintenance" and charge["physical_rows"] != 0)
+            or (operation == "append" and not 1 <= charge["physical_rows"] <= 513)
+        ):
+            raise ValueError("qualified append/maintenance geometry")
+
+
+def validate_partition_pin(value, qualification, envelope):
+    validate_qualification(qualification, envelope, expected_hash=envelope["qualification_hash"])
+    _fields(
+        value,
+        {
+            "format",
+            "generation",
+            "qualification_hash",
+            "partition_id",
+            "parent_identity",
+            "directory_identity",
+            "version",
+            "physical_rows",
+            "fragments",
+            "index",
+        },
+        "partition pin",
+    )
+    if (
+        value["format"] != PARTITION_PIN
+        or value["generation"] != envelope["generation"]
+        or value["qualification_hash"] != envelope["qualification_hash"]
+    ):
+        raise ValueError("registered partition binding")
+    if bulk.integer(value["partition_id"]) >= envelope["max_partitions"]:
+        raise ValueError("registered partition bound")
+    for name in ("parent_identity", "directory_identity"):
+        identity = value[name]
+        if not isinstance(identity, list) or len(identity) != 2:
+            raise ValueError("registered partition identity")
+        bulk.integer(identity[0])
+        positive(identity[1])
+    for key, maximum in (
+        ("version", "max_versions"),
+        ("physical_rows", "max_physical_rows"),
+        ("fragments", "max_fragments"),
+    ):
+        if bulk.integer(value[key]) > qualification["partition"][maximum]:
+            raise ValueError("registered partition geometry ceiling")
+    if (
+        bool(value["version"]) != bool(value["fragments"])
+        or bool(value["physical_rows"]) != bool(value["fragments"])
+        or value["version"] < value["fragments"]
+        or value["physical_rows"] < value["fragments"]
+    ):
+        raise ValueError("registered partition geometry")
+    index = value["index"]
+    _fields(
+        index,
+        {"version", "segments", "indexed_fragments", "tail_fragments", "tail_rows"},
+        "partition index",
+    )
+    for key in ("segments", "indexed_fragments", "tail_fragments", "tail_rows"):
+        bulk.integer(index[key])
+    if (
+        index["segments"] not in {0, 1}
+        or index["tail_rows"] > 1024
+        or index["tail_fragments"] > 32
+        or index["tail_rows"] > value["physical_rows"]
+        or index["indexed_fragments"] + index["tail_fragments"] != value["fragments"]
+    ):
+        raise ValueError("single index and bounded tail")
+    if index["segments"]:
+        if (
+            positive(index["version"]) > value["version"]
+            or not index["indexed_fragments"]
+            or value["physical_rows"] <= index["tail_rows"]
+        ):
+            raise ValueError("active index pin")
+    elif (
+        index["version"] is not None
+        or index["indexed_fragments"]
+        or index["tail_rows"] != value["physical_rows"]
+    ):
+        raise ValueError("unindexed partition pin")
+    return migration.bounded(value)
+
+
+def validate_directory_page(value, qualification, envelope):
+    _fields(
+        value,
+        {
+            "format",
+            "generation",
+            "qualification_hash",
+            "epoch",
+            "rebuild_token",
+            "partition_id",
+            "version",
+            "cursor_before",
+            "cursor_after",
+            "pin",
+            "rows",
+            "complete",
+        },
+        "directory page",
+    )
+    pin = validate_partition_pin(value["pin"], qualification, envelope)
+    bulk.sha(value["epoch"])
+    bulk.sha(value["rebuild_token"])
+    if (
+        value["format"] != "lance-layout-directory-page-v1"
+        or value["generation"] != envelope["generation"]
+        or value["qualification_hash"] != envelope["qualification_hash"]
+        or bulk.integer(value["partition_id"]) != pin["partition_id"]
+        or bulk.integer(value["version"]) != pin["version"]
+    ):
+        raise ValueError("pinned directory page")
+    before = bulk.integer(value["cursor_before"])
+    after = bulk.integer(value["cursor_after"])
+    rows = value["rows"]
+    if (
+        not isinstance(rows, list)
+        or len(rows) > 32
+        or not 0 <= before <= after <= pin["physical_rows"]
+        or after - before != len(rows)
+        or type(value["complete"]) is not bool
+        or value["complete"] != (after == pin["physical_rows"])
+    ):
+        raise ValueError("contiguous physical directory page")
+    identities = set()
+    for route in rows:
+        validate_route(route)
+        if (
+            route["partition_id"] != pin["partition_id"]
+            or route["version"] > pin["version"]
+            or route["id"] in identities
+        ):
+            raise ValueError("directory row physical binding")
+        identities.add(route["id"])
+    return migration.bounded(value)
+
+
+def validate_layout_source_window(value, descriptor, before):
+    _fields(
+        value,
+        {"format", "action", "generation", "qualification_hash", "allowed_plan_hashes", "packing"},
+        "layout source request",
+    )
+    validate_generation(value["generation"])
+    reg = migration.registration(descriptor, value["generation"]["path"])
+    migration.cursor(before, reg)
+    bulk.sha(value["qualification_hash"])
+    if (
+        value["format"] != SOURCE_REQUEST
+        or value["packing"] != PACKING
+        or value["action"] not in {"plan", "export"}
+    ):
+        raise ValueError("layout source request version")
+    hashes = value["allowed_plan_hashes"]
+    if not isinstance(hashes, list) or len(hashes) != int(value["action"] == "export"):
+        raise ValueError("single admitted source plan")
+    for digest in hashes:
+        bulk.sha(digest)
+    migration.frame_bytes(dict(descriptor=descriptor, cursor=before, layout=value))
+    return value
+
+
+def validate_layout_source_result(value, window, descriptor, before):
+    validate_layout_source_window(window, descriptor, before)
+    _fields(
+        value,
+        {
+            "status",
+            "reason",
+            "format",
+            "action",
+            "source_binding",
+            "cursor_before",
+            "cursor_after",
+            "plans",
+            "export",
+        },
+        "layout source response",
+    )
+    migration.frame_bytes(value)
+    reg = migration.registration(descriptor, window["generation"]["path"])
+    if (
+        value["format"] != SOURCE_RESULT
+        or value["action"] != window["action"]
+        or value["source_binding"] != reg["source_binding"]
+        or value["cursor_before"] != before
+    ):
+        raise ValueError("layout source response binding")
+    migration.cursor(value["cursor_after"], reg)
+    _string(value["status"], 64, "source status")
+    if value["reason"] is not None:
+        _string(value["reason"], 1024, "source reason")
+    if value["status"] != "ok":
+        if value["plans"] != [] or value["export"] is not None or value["cursor_after"] != before:
+            raise ValueError("layout refusal progress")
+        return value
+    if (
+        value["reason"] is not None
+        or not isinstance(value["plans"], list)
+        or len(value["plans"]) > 1
+    ):
+        raise ValueError("layout source success")
+    if window["action"] == "plan":
+        if value["cursor_after"] != before:
+            raise ValueError("planning never advances frontier")
+        if value["plans"]:
+            validate_owner_plan(value["plans"][0], reg)
+            if value["export"] is not None:
+                raise ValueError("planning body")
+        else:
+            terminal = migration.validate_export(value["export"], reg, before)
+            if terminal["status"] != "ok" or not terminal["complete"]:
+                raise ValueError("planning exhaustion evidence")
+        return value
+    if len(value["plans"]) != 1:
+        raise ValueError("export admitted owner plan")
+    plan = validate_owner_plan(value["plans"][0], reg)
+    if [migration.hashed(plan)] != window["allowed_plan_hashes"]:
+        raise ValueError("source plan changed")
+    exported = migration.validate_export(value["export"], reg, before)
+    if (
+        exported["status"] != "ok"
+        or exported["complete"]
+        or exported["cursor_after"] != value["cursor_after"]
+        or exported["phase"] != plan["source_phase"]
+    ):
+        raise ValueError("layout exported owner")
+    if exported["finalizations"]:
+        actual = migration.owner_reference(
+            exported["finalizations"][0], exported["phase"], exported["cursor_after"]["key"]
+        )
+        if actual != {k: plan[k] for k in migration.OWNER_FIELDS}:
+            raise ValueError("layout final owner plan")
+    elif exported["cursor_after"]["owner"] != plan["owner_key"]:
+        raise ValueError("layout staged owner plan")
+    return value
+
+
+class LayoutPlanningCounters:
+    """Current-owner scalar size/cost counters; never retains a row or proof."""
+
+    def __init__(self, qualification):
+        validate_qualification_body(
+            qualification,
+            expected_hash=migration.hashed(qualification),
+            generation=qualification["generation"],
+        )
+        for operation, prefix in (("append", "append"), ("maintenance", "index")):
+            charge = qualification["reservations"][operation]
+            setattr(
+                self, prefix + "_bytes", max(charge["logical_bytes"], charge["allocated_bytes"])
+            )
+            setattr(self, prefix + "_artifacts", charge["artifact_entries"])
+        self.append_rows = qualification["reservations"]["append"]["physical_rows"]
+        self.working_temp = qualification["working_temp_bytes"]
+        self.maintenance_batches = qualification["source_cost"]["maintenance_every_batches"]
+        self.overhead = qualification["source_cost"]["frame_overhead_bytes"]
+        # Max-width scalar receipt sizing. Never retain IDs or proof lists.
+        maximum_id = "receipt:" + "f" * 64
+        prototype = dict(
+            format=bulk.FORMAT,
+            state="committed_batch",
+            batch_id="f" * 128,
+            source_binding="f" * 64,
+            digest="f" * 64,
+            proof=[],
+            records=bulk.MAX_ENTRIES,
+            published_owners=bulk.MAX_ENTRIES,
+            entries=bulk.MAX_ENTRIES,
+        )
+        self.receipt_base = len(
+            json.dumps(bulk.receipt_row(prototype, maximum_id), allow_nan=False).encode()
+        )
+        self.proof_item_bytes = (
+            len(json.dumps(_json([maximum_id, "f" * 64]), allow_nan=False).encode()) - 2
+        )
+        self.entries = self.total_encoded = self.batches = self.physical_rows = (
+            self.max_batch_rows
+        ) = 0
+        self.current_entries = 0
+        self.current_decoded = 0
+        self.current_encoded = 2
+        self.finished = 0
+
+    def _fits(self, decoded, encoded):
+        return (
+            self.current_entries < bulk.MAX_ENTRIES
+            and self.current_decoded + decoded <= bulk.MAX_DECODED_BYTES
+            and self.current_encoded + encoded <= bulk.MAX_ENCODED_BYTES - 16 * 1024
+            and self.current_encoded + encoded + self.overhead <= 512 * 1024
+        )
+
+    def _flush(self, *, live=0):
+        rows = self.current_entries + 1 + live  # Include this physical batch receipt.
+        proof_count = rows - 1
+        self.total_encoded += (
+            self.receipt_base + proof_count * self.proof_item_bytes + max(0, proof_count - 1)
+        )
+        self.max_batch_rows = max(self.max_batch_rows, rows)
+        self.physical_rows += rows
+        self.batches += 1
+        self.current_entries = 0
+        self.current_decoded = 0
+        self.current_encoded = 2
+
+    def add_entry(self, row):
+        if self.finished:
+            raise ValueError("finished owner planning")
+        _fields(row, bulk.COLUMNS, "planning six-string row")
+        if row["kind"] not in {"bulk_page", "bulk_record"} or any(
+            type(v) is not str for v in row.values()
+        ):
+            raise ValueError("planning entry")
+        decoded = sum(len(v.encode()) for v in row.values())
+        encoded = len(json.dumps(row, ensure_ascii=True, allow_nan=False).encode()) + 2
+        if not self._fits(decoded, encoded) and self.current_entries:
+            self._flush()
+        if not self._fits(decoded, encoded):
+            raise ValueError("planning entry exceeds fixed frame")
+        self.current_entries += 1
+        self.entries += 1
+        self.current_decoded += decoded
+        self.current_encoded += encoded
+        self.total_encoded += encoded
+
+    def finish(self, reg, manifest, phase, source_key):
+        if self.finished:
+            raise ValueError("finished owner planning")
+        bulk.validate_owner(manifest)
+        if (
+            self.entries
+            != sum(f["pages"] for f in manifest["fields"].values()) + 2 * manifest["members"]
+        ):
+            raise ValueError("planning complete original expansion")
+        decoded = len(_json(manifest).encode())
+        encoded = len(json.dumps(manifest, ensure_ascii=True, allow_nan=False).encode())
+
+        def fits_final():
+            envelope = len(json.dumps(["f" * 64, reg["source_binding"], [], []]).encode())
+            wire = self.current_encoded + encoded + envelope + 2
+            return (
+                self.current_entries < bulk.MAX_ENTRIES
+                and self.current_decoded + decoded <= bulk.MAX_DECODED_BYTES
+                and wire <= bulk.MAX_ENCODED_BYTES
+                and wire + self.overhead <= 512 * 1024
+            )
+
+        if not fits_final() and self.current_entries:
+            self._flush()
+        if not fits_final():
+            raise ValueError("planning owner exceeds fixed frame")
+        self.current_entries += 1  # Owner marker is one finalization, not an input entry.
+        self.total_encoded += (
+            max(
+                encoded,
+                len(
+                    json.dumps(
+                        bulk.receipt_row(manifest, manifest["owner"]),
+                        ensure_ascii=True,
+                        allow_nan=False,
+                    ).encode()
+                ),
+            )
+            + 2
+        )
+        if manifest["live"] is not None:
+            live = manifest["live"]
+            row = dict(
+                id="receipt:" + _hash(_json([live["namespace"], live["key"]])),
+                kind="receipt",
+                text="",
+                provenance="",
+                digest=live["digest"],
+                receipt=_json(live["receipt"]),
+            )
+            self.total_encoded += len(json.dumps(row, allow_nan=False).encode()) + 2
+        self._flush(live=int(manifest["live"] is not None))
+        if (
+            self.max_batch_rows > self.append_rows
+            or self.max_batch_rows * self.maintenance_batches > 1024
+        ):
+            raise ValueError("owner needs a qualified tail cadence")
+        indexes = (self.batches + self.maintenance_batches - 1) // self.maintenance_batches
+        expansion = dict(
+            physical_rows=self.physical_rows,
+            encoded_bytes=self.total_encoded + self.batches * self.overhead,
+            retained_bytes=self.batches * self.append_bytes + indexes * self.index_bytes,
+            batches=self.batches,
+            fragments=self.batches,
+            versions=self.batches + indexes,
+            artifacts=self.batches * self.append_artifacts + indexes * self.index_artifacts,
+            index_outputs=indexes,
+            index_bytes=indexes * self.index_bytes,
+            temp_bytes=self.working_temp,
+        )
+        self.finished = 1
+        return owner_plan(reg, migration.owner_reference(manifest, phase, source_key), expansion)
 
 
 def validate_attachment(value):

@@ -223,7 +223,15 @@ class SemanticSession:
                 str(Path(__file__).with_name("lance_exact_worker.py")),
             ],
             cap=3
-            if operation in {"remember", "import_sources", "import_batch", "build_id_index"}
+            if operation
+            in {
+                "remember",
+                "import_sources",
+                "import_batch",
+                "build_id_index",
+                "layout_import_batch",
+                "layout_maintain",
+            }
             else 2,
             rss=192 * 1024**2,
             total=256 * 1024**2,
@@ -265,6 +273,39 @@ class SemanticSession:
             cap=2,
             rss=512 * 1024**2,
             total=640 * 1024**2,
+        )
+        result = source_result(request, result)
+        if result.get("status") == "ok" and self.remaining <= 0:
+            return source_refusal(request, {"status": "unavailable", "reason": "semantic_deadline"})
+        return result
+
+    def layout_source(self, descriptor, cursor, window):
+        """Single fixed source stage; the registered wrapper carries no budgets."""
+        from . import native_export_codec
+        from .sqlite_source_runtime import source_result, source_refusal
+
+        native = (
+            isinstance(descriptor, dict) and descriptor.get("format") == native_export_codec.FORMAT
+        )
+        if native:
+            from .native_source_runtime import source_request
+        else:
+            from .sqlite_source_runtime import source_request
+        request = source_request(descriptor, cursor, layout=window)
+        result = self._run_stage(
+            request,
+            worker_command=[
+                sys.executable,
+                "-I",
+                str(
+                    Path(__file__).with_name(
+                        "native_source_worker.py" if native else "sqlite_source_worker.py"
+                    )
+                ),
+            ],
+            cap=2,
+            rss=(512 if native else 128) * 1024**2,
+            total=(640 if native else 192) * 1024**2,
         )
         result = source_result(request, result)
         if result.get("status") == "ok" and self.remaining <= 0:
