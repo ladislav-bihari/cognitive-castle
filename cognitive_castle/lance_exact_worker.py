@@ -16,6 +16,7 @@ _FIELDS = {
     ),
     "layout_read": ({"operation", "arguments"}, {"context"}),
     "layout_maintain": ({"partition_id"}, set()),
+    "layout_verify_owners": ({"intent_id", "version"}, set()),
     "import_batch": ({"batch_id", "source_binding", "entries", "finalizations"}, set()),
     "build_id_index": (set(), set()),
     "bulk_owner": ({"owner"}, {"version"}),
@@ -112,7 +113,12 @@ def _execute(request):
         raise ValueError("arguments")
     if not isinstance(request["directory"], str) or not request["directory"]:
         raise ValueError("directory")
-    if operation in {"layout_import_batch", "layout_read", "layout_maintain"}:
+    if operation in {
+        "layout_import_batch",
+        "layout_read",
+        "layout_maintain",
+        "layout_verify_owners",
+    }:
         from cognitive_castle.partitioned_exact_store import PartitionedExactStore
 
         store = PartitionedExactStore(

@@ -181,52 +181,27 @@ def _layout_admit_owner(session, registration, state, context, before, refused):
 
 
 def _layout_check_owners(session, generation, pending, exported, version, refused):
-    for owner in exported["finalizations"]:
-        ready = session._ready()
-        if ready is not None:
-            return refused(ready, "owner")
-        observed = session.exact(
-            generation,
-            "layout_read",
-            dict(
-                operation="bulk_owner",
-                arguments=dict(owner=owner["owner"], version=version),
-                context=dict(intent_id=pending["intent_id"], version=version),
-            ),
+    from . import lance_layout_codec as layout
+
+    if not pending["owners"]:
+        return [], None
+    ready = session._ready()
+    if ready is not None:
+        return None, refused(ready, "owner")
+    observed = session.exact(
+        generation, "layout_verify_owners", dict(intent_id=pending["intent_id"], version=version)
+    )
+    if not isinstance(observed, dict) or observed.get("status") != "ok":
+        return None, refused(
+            observed if isinstance(observed, dict) else {"status": "unavailable"}, "owner"
         )
-        if not isinstance(observed, dict) or observed.get("status") != "ok":
-            return refused(
-                observed if isinstance(observed, dict) else {"status": "unavailable"}, "owner"
-            )
-        try:
-            if observed.get("manifest") != owner or _owner_version(observed, version) != version:
-                raise ValueError("layout owner proof")
-        except (ValueError, KeyError, TypeError):
-            return refused({"status": "conflict", "reason": "layout_owner_contract"}, "owner")
-        live = owner["live"]
-        if live is not None:
-            ready = session._ready()
-            if ready is not None:
-                return refused(ready, "live_receipt")
-            receipt = session.exact(
-                generation,
-                "layout_read",
-                dict(
-                    operation="receipt",
-                    arguments=dict(namespace=live["namespace"], key=live["key"]),
-                    context=dict(intent_id=pending["intent_id"], version=version),
-                ),
-            )
-            if not isinstance(receipt, dict) or receipt.get("status") != "ok":
-                return refused(
-                    receipt if isinstance(receipt, dict) else {"status": "unavailable"},
-                    "live_receipt",
-                )
-            if receipt != dict(status="ok", digest=live["digest"], receipt=live["receipt"]):
-                return refused(
-                    {"status": "conflict", "reason": "layout_live_receipt"}, "live_receipt"
-                )
-    return None
+    ready = session._ready()
+    if ready is not None:
+        return None, refused(ready, "owner")
+    try:
+        return layout.validate_grouped_owner_proof(observed, pending, exported, version), None
+    except (ValueError, KeyError, TypeError):
+        return None, refused({"status": "conflict", "reason": "layout_owner_contract"}, "owner")
 
 
 def _layout_fixture_tick(session, registration):
@@ -324,22 +299,32 @@ def _layout_fixture_tick(session, registration):
         if not batch["routes"]:
             raise ValueError("missing durable batch route")
         version = layout.positive(batch["routes"][-1]["version"])
-        proofs = [
-            dict(
-                owner=o["owner"],
-                manifest_hash=o["manifest_hash"],
-                partition_id=pending["target"]["partition_id"],
-                version=version,
-                live_receipt_ids=o["live_receipt_ids"],
-            )
-            for o in pending["owners"]
-        ]
+        # Preflight the complete replay/route contract before another worker.
+        # These expected references are not ACK evidence: only the actual
+        # grouped observations below supply the final owner_proofs.
+        layout.verified_summary(
+            pending,
+            batch,
+            [
+                dict(
+                    owner=owner["owner"],
+                    manifest_hash=owner["manifest_hash"],
+                    partition_id=pending["target"]["partition_id"],
+                    version=version,
+                    live_receipt_ids=owner["live_receipt_ids"],
+                )
+                for owner in pending["owners"]
+            ],
+        )
+    except (ValueError, KeyError, TypeError, IndexError):
+        return refused({"status": "conflict", "reason": "layout_replay_contract"}, "verify_replay")
+    proofs, failure = _layout_check_owners(session, generation, pending, exported, version, refused)
+    if failure is not None:
+        return failure
+    try:
         summary = layout.verified_summary(pending, batch, proofs)
     except (ValueError, KeyError, TypeError, IndexError):
         return refused({"status": "conflict", "reason": "layout_replay_contract"}, "verify_replay")
-    failure = _layout_check_owners(session, generation, pending, exported, version, refused)
-    if failure is not None:
-        return failure
     ready = session._ready()
     if ready is not None:
         return refused(ready, "ack")

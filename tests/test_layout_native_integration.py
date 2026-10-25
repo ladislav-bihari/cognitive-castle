@@ -457,6 +457,30 @@ def _read(generation, operation, arguments, *, legacy_home=None):
         )
 
 
+def _assert_grouped_proof(observed, pending, original_owner, version):
+    from cognitive_castle import lance_layout_codec as layout, migration_codec as migration
+
+    assert observed.arguments["layout_verify_owners:1"][2] == dict(
+        intent_id=pending["intent_id"], version=version
+    )
+    actual = observed.results["layout_verify_owners:1"]
+    proofs = layout.validate_grouped_owner_proof(
+        actual, pending, {"finalizations": [original_owner]}, version
+    )
+    assert proofs == [
+        dict(
+            owner=original_owner["owner"],
+            manifest_hash=migration.hashed(original_owner),
+            partition_id=pending["target"]["partition_id"],
+            version=version,
+            live_receipt_ids=[]
+            if original_owner["live"] is None
+            else original_owner["live"]["receipt"]["ids"],
+        )
+    ]
+    assert "manifest" not in actual and "BODY_SENTINEL" not in str(actual)
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="owned supervision")
 def test_native_layout_first_live_owner_uses_real_source_and_proof_ack(tmp_path):
     from cognitive_castle.canonical_records import prepare_remember
@@ -477,11 +501,10 @@ def test_native_layout_first_live_owner_uses_real_source_and_proof_ack(tmp_path)
     ]
     assert [value["outcome"] for value in imports] == ["fresh_append", "existing_verified"]
     assert imports[0]["routes"] == [] and imports[1]["routes"]
-    assert observed.calls[-5:] == [
+    assert observed.calls[-4:] == [
         "layout_import_batch:1",
         "layout_import_batch:2",
-        "layout_read:1",
-        "layout_read:2",
+        "layout_verify_owners:1",
         "queue_layout_ack:1",
     ]
     assert (
@@ -491,23 +514,10 @@ def test_native_layout_first_live_owner_uses_real_source_and_proof_ack(tmp_path)
     assert len(import_args["finalizations"]) == 1
     owner = import_args["finalizations"][0]
     version = imports[1]["routes"][-1]["version"]
-    context = dict(intent_id=import_args["intent_id"], version=version)
-    owner_args = observed.arguments["layout_read:1"][2]
-    live_args = observed.arguments["layout_read:2"][2]
-    assert owner_args == dict(
-        operation="bulk_owner",
-        arguments=dict(owner=owner["owner"], version=version),
-        context=context,
-    )
-    assert observed.results["layout_read:1"]["manifest"] == owner
-    assert observed.results["layout_read:1"]["version"] == version
-    assert live_args == dict(
-        operation="receipt",
-        arguments=dict(namespace="operator", key="nine"),
-        context=context,
+    _assert_grouped_proof(
+        observed, observed.arguments["queue_layout_prepare:1"][2]["intent"], owner, version
     )
     expected_receipt = dict(status="ok", digest=original.digest, receipt=original.receipt)
-    assert observed.results["layout_read:2"] == expected_receipt
     with _session(generation) as session:
         checked = ObservedLayoutSession(session)
         state = checked.store(
@@ -543,7 +553,9 @@ def test_native_layout_lost_append_keeps_pending_and_blocks_legacy_reads(tmp_pat
     lost, first = _tick(registration, loss="layout_import_batch:1")
     assert lost["status"] == "unavailable" and lost["reason"] == "fixture_lost_response", lost
     assert first.results["layout_import_batch:1"]["outcome"] == "fresh_append"
-    assert not any(point.startswith(("layout_read:", "queue_layout_ack:")) for point in first.calls)
+    assert not any(
+        point.startswith(("layout_verify_owners:", "queue_layout_ack:")) for point in first.calls
+    )
     before = _queue_state(registration)
     assert before["status"] == "ok" and before["pending"] is not None, before
     assert before["counts"]["live_owners"] == before["owner_references"] == 0
@@ -581,15 +593,15 @@ def test_native_layout_lost_append_keeps_pending_and_blocks_legacy_reads(tmp_pat
         value for point, value in retry.results.items() if point.startswith("layout_import_batch:")
     ]
     assert len(imports) == 1 and imports[0]["outcome"] == "existing_verified"
-    assert retry.calls[-4:] == [
+    assert retry.calls[-3:] == [
         "layout_import_batch:1",
-        "layout_read:1",
-        "layout_read:2",
+        "layout_verify_owners:1",
         "queue_layout_ack:1",
     ]
     assert imports[0]["receipt"] == first.results["layout_import_batch:1"]["receipt"]
     # The first empty-home append is still the only native version after retry.
     assert {route["version"] for route in imports[0]["routes"]} == {1}
+    _assert_grouped_proof(retry, pending, owner, 1)
     after = _queue_state(registration)
     assert after["status"] == "ok" and after["pending"] is None, after
     assert after["counts"]["live_owners"] == after["owner_references"] == 1
@@ -823,7 +835,7 @@ def test_native_layout_rebuild_debt_and_cross_partition_original_version_reuse(t
         "semantic_pending",
     ):
         assert original_state[key] == before[key]
-    assert _CALLS - first_call == 64
+    assert _CALLS - first_call == 63
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="owned supervision")
@@ -857,20 +869,16 @@ def test_native_source_layout_wrapper_keeps_original_address_and_text(tmp_path):
     assert observed.calls[-4:] == [
         "layout_import_batch:1",
         "layout_import_batch:2",
-        "layout_read:1",
+        "layout_verify_owners:1",
         "queue_layout_ack:1",
     ]
     assert observed.results["layout_import_batch:1"]["outcome"] == "fresh_append"
     existing = observed.results["layout_import_batch:2"]
     assert existing["outcome"] == "existing_verified"
     version = existing["routes"][-1]["version"]
-    assert observed.arguments["layout_read:1"][2] == dict(
-        operation="bulk_owner",
-        arguments=dict(owner=owner["owner"], version=version),
-        context=dict(intent_id=first[2]["intent_id"], version=version),
+    _assert_grouped_proof(
+        observed, observed.arguments["queue_layout_prepare:1"][2]["intent"], owner, version
     )
-    assert observed.results["layout_read:1"]["manifest"] == owner
-    assert observed.results["layout_read:1"]["version"] == version
     state = _queue_state(registration)
     assert state["status"] == "ok" and state["pending"] is None, state
     assert state["counts"]["historical_occurrences"] == state["owner_references"] == 1

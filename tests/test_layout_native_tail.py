@@ -248,7 +248,7 @@ def _same_frontier(before, after):
 
 
 def test_native_layout_bootstrap_then_optimize_persists_without_source_progress(tmp_path):
-    """Exactly34 starts; actual original LIVE and first HISTORY, no source EOF."""
+    """Exactly33 starts; actual original LIVE and first HISTORY, no source EOF."""
     first_call = native._CALLS
     _tree(tmp_path)
     source, generation, registration, _ = native._setup(tmp_path)
@@ -294,7 +294,7 @@ def test_native_layout_bootstrap_then_optimize_persists_without_source_progress(
             )
         ],
     )
-    assert native._CALLS - first_call == 34
+    assert native._CALLS - first_call == 33
     _tree(tmp_path)
 
 
@@ -456,7 +456,7 @@ def test_native_layout_foreign_stage_and_changed_provenance_preserve_pending(tmp
     assert _tree(generation / "exact/partitions", hashes=True) == files
     final = native._queue_state(registration)
     assert final["pending"] is None and final["counts"]["live_owners"] == 1
-    assert native._CALLS - first_call == 24
+    assert native._CALLS - first_call == 23
     _tree(tmp_path)
 
 
@@ -559,7 +559,9 @@ def test_native_layout_exact_tail_refuses_then_bootstraps_and_resumes_original_i
     assert owner["members"] == owner["text_bytes"] == owner["text_chars"] == 520
     assert owner["text_hash"] == hashlib.sha256(b"x" * 520).hexdigest() and owner["live"] is None
     assert final.results["layout_import_batch:2"]["outcome"] == "existing_verified"
-    assert final.results["layout_read:1"]["manifest"] == owner
+    native._assert_grouped_proof(
+        final, final.arguments["queue_layout_prepare:1"][2]["intent"], owner, 6
+    )
     state = native._queue_state(registration)
     assert state["pending"] is None and state["counts"]["historical_occurrences"] == 1
     assert state["counts"]["members"] == 520 and state["owner_references"] == 1

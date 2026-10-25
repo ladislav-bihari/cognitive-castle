@@ -312,6 +312,102 @@ class PartitionedExactStore:
 
         return self._run(maintain)
 
+    def layout_verify_owners(self, intent_id, version):
+        """One current owner/LIVE observation; actual import replay stays separate."""
+        bulk.sha(intent_id)
+        layout.positive(version)
+
+        def verify(authority):
+            pending = authority.pending(intent_id)
+            if len(pending["owners"]) != 1:
+                raise _StoreError("conflict")
+            reference = pending["owners"][0]
+            pid, owner = pending["target"]["partition_id"], reference["owner"]
+            store = _PartitionStore(
+                authority,
+                pid,
+                owner,
+                pending["source_binding"],
+                intent_id=intent_id,
+                proof_version=version,
+            )
+            try:
+                dataset, _ = store._read(version=version)
+                identities = [owner]
+                if reference["classification"] == "live":
+                    identities.append("receipt:" + migration.hashed(reference["source_key"]))
+                # Owner and receipt observations have no foreign/older route
+                # exception. Canonical record hydration below retains its usual
+                # bounded resolver and original first-owner visibility checks.
+                resolved = store._resolve_ids(identities)
+                locations = {row["id"]: row for row in [*resolved["routes"], *resolved["claims"]]}
+                if resolved["status"] != "ok" or set(locations) != set(identities):
+                    raise _StoreError("unavailable")
+                if any(
+                    row["partition_id"] != pid
+                    or row["gate"] != owner
+                    or row.get("version") not in (None, version)
+                    for row in locations.values()
+                ):
+                    raise _StoreError("conflict")
+                found = store._lookup_rows(dataset, identities, checked=True)
+                if set(found) != set(identities):
+                    raise _StoreError("corrupt")
+                manifest = decode_receipt(found[owner])
+                try:
+                    observed_reference = migration.owner_reference(
+                        manifest, reference["source_phase"], reference["source_key"]
+                    )
+                except (ValueError, TypeError, KeyError):
+                    raise _StoreError("corrupt") from None
+                if (
+                    manifest["state"] != "published_owner"
+                    or manifest["source_binding"] != pending["source_binding"]
+                    or observed_reference != reference
+                ):
+                    raise _StoreError("corrupt")
+                live = manifest["live"]
+                live_proof = None
+                if live is not None:
+                    if reference["source_key"] != [live["namespace"], live["key"]]:
+                        raise _StoreError("corrupt")
+                    row = found[identities[1]]
+                    stored, _ = store._verify_receipt(dataset, row, live["namespace"], live["key"])
+                    if row["digest"] != live["digest"] or stored != live["receipt"]:
+                        raise _StoreError("corrupt")
+                    live_proof = dict(
+                        namespace=live["namespace"],
+                        key=live["key"],
+                        digest=row["digest"],
+                        receipt_hash=migration.hashed(stored),
+                    )
+                result = dict(
+                    status="ok",
+                    format=layout.GROUPED_OWNER_PROOF,
+                    intent_hash=migration.hashed(pending),
+                    owners=[
+                        dict(
+                            owner=manifest["owner"],
+                            manifest_hash=migration.hashed(manifest),
+                            partition_id=pid,
+                            version=dataset.version,
+                            live_receipt_ids=[] if live is None else list(stored["ids"]),
+                            live=live_proof,
+                        )
+                    ],
+                )
+                # The same strict transport check runs in the coordinator
+                # against freshly regenerated source. Here it also preflights
+                # the complete bounded response before leaving this handle.
+                layout.validate_grouped_owner_proof(
+                    result, pending, {"finalizations": [manifest]}, version
+                )
+                return result
+            finally:
+                store.release_remote()
+
+        return self._run(verify)
+
     def _directory_page(self, authority, partition_id, version, cursor):
         store = _PartitionStore(
             authority,

@@ -192,23 +192,40 @@ class PendingSession:
                 self.fresh -= 1
                 return {**self.batch, "outcome": "fresh_append", "routes": []}
             return copy.deepcopy(self.batch)
-        assert operation == "layout_read"
-        assert arguments["context"] == {"intent_id": self.intent["intent_id"], "version": 7}
-        if arguments["operation"] == "receipt":
-            assert self._ready() is None, "late owner result cannot start LIVE work"
-            live = self.exported["finalizations"][0]["live"]
-            assert arguments["arguments"] == {"namespace": live["namespace"], "key": live["key"]}
-            if self.live_refusal:
-                return {"status": "unavailable", "reason": "semantic_deadline"}
-            return {"status": "ok", "digest": live["digest"], "receipt": live["receipt"]}
-        assert arguments == dict(
-            operation="bulk_owner",
-            arguments={"owner": self.exported["finalizations"][0]["owner"], "version": 7},
-            context={"intent_id": self.intent["intent_id"], "version": 7},
-        )
+        assert operation == "layout_verify_owners"
+        assert arguments == dict(intent_id=self.intent["intent_id"], version=7)
+        if self.live_refusal:
+            return {"status": "unavailable", "reason": "semantic_deadline"}
         if self.late_owner:
             self.remaining = 0
-        return {"status": "ok", "version": 7, "manifest": self.exported["finalizations"][0]}
+        return grouped_observation(self)
+
+
+def grouped_observation(session):
+    owner = session.exported["finalizations"][0]
+    live = owner["live"]
+    return dict(
+        status="ok",
+        format="lance-layout-owner-verification-v1",
+        intent_hash=session.migration.hashed(session.intent),
+        owners=[
+            dict(
+                owner=owner["owner"],
+                manifest_hash=session.migration.hashed(owner),
+                partition_id=session.intent["target"]["partition_id"],
+                version=7,
+                live_receipt_ids=[] if live is None else live["receipt"]["ids"],
+                live=None
+                if live is None
+                else dict(
+                    namespace=live["namespace"],
+                    key=live["key"],
+                    digest=live["digest"],
+                    receipt_hash=session.migration.hashed(live["receipt"]),
+                ),
+            )
+        ],
+    )
 
 
 def test_layout_tick_keeps_fixed_partition_through_retry():
@@ -220,7 +237,8 @@ def test_layout_tick_keeps_fixed_partition_through_retry():
     assert refusal["status"] == "unavailable"
     assert first.state == saved
     assert not any(
-        op in {"queue_layout_ack", "layout_read", "queue_layout_bind", "queue_layout_prepare"}
+        op
+        in {"queue_layout_ack", "layout_verify_owners", "queue_layout_bind", "queue_layout_prepare"}
         for op, _ in first.calls
     )
     retry = PendingSession()
@@ -235,7 +253,7 @@ def test_layout_tick_keeps_fixed_partition_through_retry():
         "queue_layout_resume",
         "layout_source",
         "layout_import_batch",
-        "layout_read",
+        "layout_verify_owners",
         "queue_layout_ack",
     ]
     assert not {"sqlite3", "lance", "pyarrow", "numpy"}.intersection(sys.modules)
@@ -320,7 +338,8 @@ def test_layout_protocol_changed_regeneration_never_publishes():
     assert result["status"] == "conflict"
     assert session.state == saved
     assert not any(
-        op in {"layout_import_batch", "layout_read", "queue_layout_ack"} for op, _ in session.calls
+        op in {"layout_import_batch", "layout_verify_owners", "queue_layout_ack"}
+        for op, _ in session.calls
     )
 
 
@@ -335,7 +354,7 @@ def test_layout_protocol_fresh_append_requires_reopened_existing():
         "layout_source",
         "layout_import_batch",
         "layout_import_batch",
-        "layout_read",
+        "layout_verify_owners",
         "queue_layout_ack",
     ]
     imports = [args for op, args in session.calls if op == "layout_import_batch"]
@@ -348,7 +367,7 @@ def test_layout_protocol_two_fresh_results_never_publish():
     session = PendingSession(fresh=2)
     assert _layout_fixture_tick(session, session.reg)["status"] == "conflict"
     assert len([op for op, _ in session.calls if op == "layout_import_batch"]) == 2
-    assert not any(op in {"layout_read", "queue_layout_ack"} for op, _ in session.calls)
+    assert not any(op in {"layout_verify_owners", "queue_layout_ack"} for op, _ in session.calls)
 
 
 def test_layout_protocol_source_refusal_preserves_reason():
@@ -364,7 +383,8 @@ def test_layout_protocol_source_refusal_preserves_reason():
     )
     assert session.state == saved
     assert not any(
-        op in {"layout_import_batch", "layout_read", "queue_layout_ack"} for op, _ in session.calls
+        op in {"layout_import_batch", "layout_verify_owners", "queue_layout_ack"}
+        for op, _ in session.calls
     )
 
 
@@ -376,7 +396,7 @@ def test_layout_protocol_live_refusal_preserves_resource_reason():
     assert (result["status"], result["reason"], result["phase"]) == (
         "unavailable",
         "semantic_deadline",
-        "live_receipt",
+        "owner",
     )
     assert not any(op == "queue_layout_ack" for op, _ in session.calls)
 
@@ -387,25 +407,17 @@ def test_layout_protocol_late_live_owner_never_starts_receipt_or_ack():
     session = PendingSession(live=True, late_owner=True)
     result = _layout_fixture_tick(session, session.reg)
     assert result["status"] == "unavailable" and result["reason"] == "semantic_deadline"
-    assert not any(
-        op == "queue_layout_ack" or (op == "layout_read" and args["operation"] == "receipt")
-        for op, args in session.calls
-    )
+    assert not any(op in {"queue_layout_ack", "layout_read"} for op, args in session.calls)
 
 
-def test_layout_protocol_pending_owner_and_live_use_same_replay_context():
+def test_layout_protocol_pending_owner_and_live_use_same_grouped_replay_context():
     from cognitive_castle.migration_coordinator import _layout_fixture_tick
 
     session = PendingSession(live=True)
     assert _layout_fixture_tick(session, session.reg)["status"] == "ok"
-    reads = [args for op, args in session.calls if op == "layout_read"]
-    assert [args["operation"] for args in reads] == ["bulk_owner", "receipt"]
-    assert (
-        reads[0]["context"]
-        == reads[1]["context"]
-        == {"intent_id": session.intent["intent_id"], "version": 7}
-    )
-    assert "version" not in reads[1]["arguments"]
+    reads = [args for op, args in session.calls if op == "layout_verify_owners"]
+    assert reads == [{"intent_id": session.intent["intent_id"], "version": 7}]
+    assert not any(op == "layout_read" for op, _ in session.calls)
 
 
 def test_layout_protocol_first_owner_plans_binds_and_publishes_same_session():
@@ -421,8 +433,7 @@ def test_layout_protocol_first_owner_plans_binds_and_publishes_same_session():
         "queue_layout_prepare",
         "layout_import_batch",
         "layout_import_batch",
-        "layout_read",
-        "layout_read",
+        "layout_verify_owners",
         "queue_layout_ack",
     ]
 

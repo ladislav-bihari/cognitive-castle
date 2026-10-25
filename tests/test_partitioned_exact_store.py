@@ -610,6 +610,23 @@ def _check_grouped_facade(monkeypatch, *, phase="live", fault=None):
             calls.append("lookup")
             return {identity: rows[identity] for identity in ids if identity in rows}
 
+        def _resolve_ids(self, ids):
+            return dict(
+                status="ok",
+                routes=[],
+                absent=[],
+                unavailable=[],
+                claims=[
+                    dict(
+                        id=identity,
+                        partition_id=pending["target"]["partition_id"],
+                        gate=manifest["owner"],
+                        version=None,
+                    )
+                    for identity in ids
+                ],
+            )
+
         def _verify_receipt(self, actual_dataset, row, namespace, key):
             calls.append("original_receipt_validator")
             return super()._verify_receipt(actual_dataset, row, namespace, key)

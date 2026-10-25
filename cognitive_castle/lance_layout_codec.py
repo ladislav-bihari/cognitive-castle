@@ -25,6 +25,7 @@ QUALIFICATION = "lance-layout-qualification-v1"
 SOURCE_REQUEST = "lance-layout-source-request-v1"
 SOURCE_RESULT = "lance-layout-source-result-v1"
 PARTITION_PIN = "lance-layout-partition-pin-v1"
+GROUPED_OWNER_PROOF = "lance-layout-owner-verification-v1"
 PACKING = "bulk-v1-ascii-layout-1"
 EXPANSION = (
     "physical_rows",
@@ -918,6 +919,79 @@ def verified_summary(intent, batch, owner_proofs):
         ),
         intent,
     )
+
+
+def validate_grouped_owner_proof(value, intent, exported, version):
+    """Check current actual observations against the original source, not a cache."""
+    positive(version)
+    _fields(value, {"status", "format", "intent_hash", "owners"}, "grouped owner result")
+    bulk.sha(value["intent_hash"])
+    if (
+        value["status"] != "ok"
+        or value["format"] != GROUPED_OWNER_PROOF
+        or value["intent_hash"] != migration.hashed(intent)
+        or len(intent["owners"]) != 1
+        or len(exported["finalizations"]) != 1
+        or not isinstance(value["owners"], list)
+        or len(value["owners"]) != 1
+    ):
+        raise ValueError("single pending owner observations")
+    proof = value["owners"][0]
+    _fields(
+        proof,
+        {"owner", "manifest_hash", "partition_id", "version", "live_receipt_ids", "live"},
+        "grouped owner observation",
+    )
+    bulk.identity(proof["owner"])
+    bulk.sha(proof["manifest_hash"])
+    bulk.integer(proof["partition_id"])
+    positive(proof["version"])
+    ids = proof["live_receipt_ids"]
+    if not isinstance(ids, list) or len(ids) > 9:
+        raise ValueError("original live memory IDs")
+    for identity in ids:
+        bulk.identity(identity, "memory")
+    if len(set(ids)) != len(ids):
+        raise ValueError("duplicate live memory IDs")
+    live = proof["live"]
+    if live is not None:
+        _fields(live, {"namespace", "key", "digest", "receipt_hash"}, "grouped live observation")
+        _string(live["namespace"], 128, "namespace")
+        _string(live["key"], 128, "key")
+        bulk.sha(live["digest"])
+        bulk.sha(live["receipt_hash"])
+    owner = intent["owners"][0]
+    manifest = bulk.validate_owner(exported["finalizations"][0])
+    original = manifest["live"]
+    if (
+        migration.owner_reference(manifest, owner["source_phase"], owner["source_key"]) != owner
+        or proof["owner"] != owner["owner"]
+        or proof["manifest_hash"] != migration.hashed(manifest)
+        or proof["partition_id"] != intent["target"]["partition_id"]
+        or proof["version"] != version
+        or ids != owner["live_receipt_ids"]
+        or live
+        != (
+            None
+            if original is None
+            else dict(
+                namespace=original["namespace"],
+                key=original["key"],
+                digest=original["digest"],
+                receipt_hash=migration.hashed(original["receipt"]),
+            )
+        )
+    ):
+        raise ValueError("grouped original owner binding")
+    if max(len(_json(value).encode()), len(json.dumps(value, allow_nan=False).encode())) > 4096:
+        raise ValueError("grouped owner result bound")
+    migration.bounded(value)
+    return [
+        {
+            **{key: item for key, item in proof.items() if key != "live"},
+            "live_receipt_ids": list(ids),
+        }
+    ]
 
 
 def validate_layout_verified(value, intent):
