@@ -482,7 +482,7 @@ def validate_pending(value, reg, layout=None):
     lance_layout_codec.validate_envelope(layout["envelope"])
     if layout["envelope_hash"] != hashed(layout["envelope"]):
         raise ValueError("layout attachment envelope")
-    lance_layout_codec.validate_layout_intent(value, reg)
+    lance_layout_codec.validate_attached_layout_intent(value, reg)
     target = value["target"]
     envelope = layout["envelope"]
     if (
