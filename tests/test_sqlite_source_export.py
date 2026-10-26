@@ -35,6 +35,14 @@ def fixture_main():
     receipt = store.remember("nine", text, {"workspace": "original", "note": "\x00"})
     assert receipt["status"] == "ok" and len(receipt["ids"]) == 9
     assert store.remember("nine", text, {"workspace": "original", "note": "\x00"}) == receipt
+    prefix_receipts = []
+    if request.get("prefix_small"):
+        for ordinal, body in enumerate(("first small Ω\0", "second\nsmall", "third small\t")):
+            small = store.remember(
+                "aaa-prefix-" + str(ordinal), body, {"workspace": "prefix Ω", "note": "\0"}
+            )
+            assert small["status"] == "ok"
+            prefix_receipts.append(dict(receipt=small, text=body))
     facts = dict(archive_id="archive", snapshot_id="original", version=7)
     metadata = (
         ' { "workspace" : "meta", "n" : "\\u0000", "long" : "'
@@ -268,6 +276,7 @@ def fixture_main():
                 original_sources=original_sources,
                 original_public=original_public,
                 pending_chunk_id=pending_chunk_id,
+                **({"prefix_receipts": prefix_receipts} if request.get("prefix_small") else {}),
             )
         )
     )

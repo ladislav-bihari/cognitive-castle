@@ -394,6 +394,10 @@ class Source:
             result.append(value)
         return result
 
+    @staticmethod
+    def alias_query():
+        return "SELECT CASE WHEN alias='' THEN '' ELSE CAST(substr(CAST(alias AS BLOB),1,4097) AS TEXT) END FROM history_aliases WHERE identity=? ORDER BY alias"
+
     def prefix_bounds(self, phase, key):
         """Conservative scalar/129-ID preview, never full owner verification."""
         self.check_time()
@@ -461,11 +465,12 @@ class Source:
             query = (
                 "SELECT length(CAST(alias AS BLOB)) FROM history_aliases WHERE identity=? LIMIT 129"
             )
-            plan = list(self.conn.execute("EXPLAIN QUERY PLAN " + query, key))
-            if not any(
-                "SEARCH history_aliases" in item[3] and "ANY(" not in item[3] for item in plan
-            ):
-                return overflow
+            for statement in (query, self.alias_query()):
+                plan = list(self.conn.execute("EXPLAIN QUERY PLAN " + statement, key))
+                if not any(
+                    "SEARCH history_aliases" in item[3] and "ANY(" not in item[3] for item in plan
+                ):
+                    return overflow
             aliases = list(self.conn.execute(query, key))
             if len(aliases) >= 129:
                 return overflow
@@ -697,7 +702,7 @@ class Source:
             if "history_aliases" in self.tables:
                 first = True
                 for row in self.conn.execute(
-                    "SELECT CASE WHEN alias='' THEN '' ELSE CAST(substr(CAST(alias AS BLOB),1,4097) AS TEXT) END FROM history_aliases WHERE identity=? ORDER BY alias",
+                    self.alias_query(),
                     key,
                 ):
                     if not first:
@@ -993,7 +998,7 @@ def validate_audit(source, key):
             raise Refusal("corrupt", "orphan_capture_mapping")
 
 
-def next_unit(source, cursor):
+def next_unit(source, cursor, *, same_phase=False):
     """Keyset scan; the cursor key means current owner or last completed key."""
     phase, key = cursor["phase"], cursor["key"]
     if cursor["owner"] is not None:
@@ -1042,6 +1047,8 @@ def next_unit(source, cursor):
             ).fetchone()
             if row:
                 raise Refusal("incomplete", "orphan_chunk")
+        if same_phase:
+            return phase, None
         phase = {"live": "history", "history": "audit", "audit": "orphans", "orphans": "done"}[
             phase
         ]
@@ -1185,7 +1192,10 @@ def export_slice(descriptor, cursor, *, layout=None):
         coverage="indexed-only",
         frame_bytes=0,
     )
-    plans = []
+    plans, prefix_payload = [], {}
+    is_prefix = (
+        isinstance(layout, dict) and layout.get("format") == "lance-layout-source-prefix-request-v1"
+    )
     try:
         if layout is not None:
             from .lance_layout_codec import LayoutPlanningCounters, validate_layout_source_window
@@ -1206,6 +1216,16 @@ def export_slice(descriptor, cursor, *, layout=None):
             after = initial_cursor(source.binding, descriptor["store_id"])
             after["phase"] = "done"
             result.update(cursor_after=after, complete=True, phase_complete=True)
+        elif is_prefix:
+            incomplete = any(
+                table in source.tables
+                and source.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                for table in ("history_gaps", "history_staged_rows")
+            )
+            result["coverage"] = "incomplete" if incomplete else "indexed-only"
+            prefix_payload = _prefix_payload(
+                source, reg, before, layout, qualification, phase, key, result["coverage"]
+            )
         elif layout is not None:
             if phase == "audit":
                 validate_audit(source, key)
@@ -1221,12 +1241,13 @@ def export_slice(descriptor, cursor, *, layout=None):
             _export_owner(source, result, cursor, phase, key)
         # Snapshot facts are checked both sides of *every* successful slice.
         source.validate_files()
-        incomplete = any(
-            table in source.tables
-            and source.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-            for table in ("history_gaps", "history_staged_rows")
-        )
-        result["coverage"] = "incomplete" if incomplete else "indexed-only"
+        if not is_prefix or phase == "done":
+            incomplete = any(
+                table in source.tables
+                and source.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                for table in ("history_gaps", "history_staged_rows")
+            )
+            result["coverage"] = "incomplete" if incomplete else "indexed-only"
         # Includes the extra accounting fields themselves and ASCII escaping.
         for _ in range(3):
             result["frame_bytes"] = len(frame_bytes(result))
@@ -1261,6 +1282,8 @@ def export_slice(descriptor, cursor, *, layout=None):
                 result.update(status="stale", reason="source_post_slice_identity")
         if result["status"] != "ok":
             _normalize_refusal(result, before, source)
+    if is_prefix:
+        return _prefix_response(source, descriptor, before, layout, result, prefix_payload)
     if layout is not None:
         return _layout_response(source, descriptor, before, layout, result, plans)
     return result
@@ -1280,3 +1303,110 @@ def _layout_response(source, descriptor, before, layout, result, plans):
         result.update(status="qualification_required", reason="layout_source_frame_limit")
     _normalize_refusal(result, before, source)
     return layout_result(descriptor, before, layout, result, [])
+
+
+def _prefix_fits(source, phase, key, packet):
+    bounds = source.prefix_bounds(phase, key)
+    rows, decoded = bounds["rows"], bounds["decoded"]
+    if packet is not None:
+        for part in packet["components"]:
+            exported = part["export"]
+            rows += len(exported["entries"]) + len(exported["finalizations"])
+            decoded += sum(
+                len(value.encode()) for row in exported["entries"] for value in row.values()
+            )
+            decoded += sum(len(_json(owner).encode()) for owner in exported["finalizations"])
+    return rows <= bulk.MAX_ENTRIES and decoded <= bulk.MAX_DECODED_BYTES
+
+
+def _prefix_payload(source, reg, before, window, qualification, phase, key, coverage):
+    from .lance_layout_codec import LayoutPlanningCounters
+    from .lance_layout_packing import MAX_OWNERS, _SIZE_ERRORS, pack_source_prefix
+    from .migration_codec import hashed
+
+    selected, packet, cursor = [], None, dict(before)
+    frozen = window["action"] == "export"
+    limit = len(window["allowed_plan_hashes"]) if frozen else MAX_OWNERS
+    original_phase = phase
+    for index in range(limit):
+        source.check_time()
+        fits = _prefix_fits(source, phase, key, packet)
+        if not fits and selected:
+            break
+        if phase == "audit":
+            validate_audit(source, key)
+        planning = LayoutPlanningCounters(qualification)
+        owner = source.owner(phase, key, planning=planning)
+        plan = planning.finish(reg, owner, phase, key)
+        source.check_time()
+        if frozen and window["allowed_plan_hashes"][index] != hashed(plan):
+            raise Refusal("conflict", "layout_owner_plan_mismatch")
+        if not fits or plan["expansion"]["batches"] != 1:
+            if not selected and not frozen:
+                return dict(fallback_plan=plan)
+            break
+        exported = dict(
+            status="ok",
+            reason=None,
+            source_binding=source.binding,
+            cursor_before=dict(cursor),
+            cursor_after=dict(cursor),
+            entries=[],
+            finalizations=[],
+            counts=empty_counts(),
+            phase=phase,
+            phase_complete=False,
+            complete=False,
+            coverage=coverage,
+            frame_bytes=0,
+        )
+        _export_owner(source, exported, cursor, phase, key, manifest=owner)
+        for _ in range(3):
+            exported["frame_bytes"] = len(frame_bytes(exported))
+        try:
+            candidate = pack_source_prefix(
+                reg, before, [*selected, dict(plan=plan, export=exported)]
+            )
+        except ValueError as exc:
+            if str(exc) not in _SIZE_ERRORS | {"whole owner prefix required"}:
+                raise
+            if not selected and not frozen:
+                return dict(fallback_plan=plan)
+            break
+        if len(candidate["components"]) != len(selected) + 1:
+            break
+        packet, selected, cursor = (
+            candidate,
+            candidate["components"],
+            dict(exported["cursor_after"]),
+        )
+        if index + 1 == limit:
+            break
+        phase, key = next_unit(source, cursor, same_phase=True)
+        if key is None or phase != original_phase:
+            break
+    if packet is None or (frozen and len(selected) != limit):
+        raise Refusal("conflict", "layout_source_prefix_mismatch")
+    source.check_time()
+    return dict(prefix=packet)
+
+
+def _prefix_response(source, descriptor, before, window, result, payload):
+    from .lance_layout_packing import prefix_result
+
+    try:
+        if result["status"] == "ok":
+            if result["complete"]:
+                payload = dict(terminal=result)
+            wrapped = prefix_result(descriptor, before, window, **payload)
+            source.check_time()
+            return wrapped
+    except Refusal as exc:
+        result.update(status=exc.status, reason=exc.reason)
+    except MemoryError:
+        result.update(status="qualification_required", reason="sqlite_summary_limit")
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result.update(status="qualification_required", reason="layout_source_frame_limit")
+    return prefix_result(
+        descriptor, before, window, status=result["status"], reason=result["reason"]
+    )
