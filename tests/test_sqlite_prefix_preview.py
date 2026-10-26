@@ -57,6 +57,8 @@ def source_case(*, phase="live", scalar=None, ids=None, relational=None, indexed
         calls.append((sql, tuple(args)))
         assert "count(" not in sql.lower() and "sum(" not in sql.lower()
         if sql.startswith("EXPLAIN"):
+            if indexed == "ordered_scan" and "ORDER BY" in sql:
+                return Rows([(0, 0, 0, "SCAN history_aliases")])
             if indexed == "skip_scan":
                 return Rows(
                     [
@@ -157,3 +159,11 @@ def test_indexed_alias_preview_does_not_sort_unbounded_matches():
         sql for sql, _ in calls if "FROM history_aliases" in sql and not sql.startswith("EXPLAIN")
     )
     assert "ORDER BY" not in query and "LIMIT 129" in query
+
+
+def test_original_ordered_alias_scan_also_requires_bounded_identity_lookup():
+    source, key, calls = source_case(phase="history", indexed="ordered_scan")
+    assert source.prefix_bounds("history", key)["rows"] > 256
+    assert not any(
+        "FROM history_aliases" in sql and not sql.startswith("EXPLAIN") for sql, _ in calls
+    )
