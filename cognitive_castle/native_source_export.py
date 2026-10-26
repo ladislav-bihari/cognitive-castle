@@ -512,7 +512,10 @@ def export_slice(descriptor, cursor, *, layout=None):
         coverage="incomplete",
         frame_bytes=0,
     )
-    plans = []
+    plans, prefix_payload = [], {}
+    is_prefix = (
+        layout is not None and layout.get("format") == "lance-layout-source-prefix-request-v1"
+    )
     try:
         if layout is not None:
             from .lance_layout_codec import LayoutPlanningCounters, validate_layout_source_window
@@ -528,7 +531,9 @@ def export_slice(descriptor, cursor, *, layout=None):
         if cursor["phase"] == "done":
             raise Refusal("corrupt", "native_export_already_done")
         if source.open(cursor):
-            if layout is None:
+            if is_prefix:
+                prefix_payload = _prefix_payload(source, reg, before, layout, qualification)
+            elif layout is None:
                 _export_owner(source, result, cursor)
             else:
                 owner = source.owner(planning=planning)
@@ -589,6 +594,8 @@ def export_slice(descriptor, cursor, *, layout=None):
             except (ValueError, MemoryError):
                 result.update(status="qualification_required", reason="native_source_frame_limit")
                 _normalize_refusal(result, before, source)
+    if is_prefix:
+        return _prefix_response(source, descriptor, before, layout, result, prefix_payload)
     if layout is not None:
         return _layout_response(source, descriptor, before, layout, result, plans)
     return result
@@ -608,3 +615,117 @@ def _layout_response(source, descriptor, before, layout, result, plans):
         result.update(status="qualification_required", reason="layout_source_frame_limit")
     _normalize_refusal(result, before, source)
     return layout_result(descriptor, before, layout, result, [])
+
+
+def _prefix_fits(source, packet):
+    """Content-only lower bounds; never read a later giant owner to split a prefix."""
+    header = source.header
+    reads = 4 * ((header["text_characters"] + PROJECTION_CHARACTERS - 1) // PROJECTION_CHARACTERS)
+    projected = 4 * header["text_bytes"]
+    decoded = header["text_bytes"] + len(source.metadata.encode()) + len(source.columns.encode())
+    # Each original member needs at least a record and membership page; all
+    # four field streams and the owner marker remain required, including empty.
+    members = max(1, (header["text_bytes"] + 8191) // 8192)
+    rows = 2 * members + 5
+    if packet is not None:
+        for part in packet["components"]:
+            exported = part["export"]
+            rows += len(exported["entries"]) + len(exported["finalizations"])
+            decoded += sum(
+                len(value.encode()) for row in exported["entries"] for value in row.values()
+            )
+            decoded += sum(len(_json(owner).encode()) for owner in exported["finalizations"])
+    return (
+        source.projections + reads <= MAX_PROJECTIONS
+        and source.projected_bytes + projected <= MAX_PROJECTED_BYTES
+        and decoded <= bulk.MAX_DECODED_BYTES
+        and rows <= bulk.MAX_ENTRIES
+    )
+
+
+def _prefix_payload(source, reg, before, window, qualification):
+    """Prepare original whole owners in one already-open immutable source view."""
+    from .lance_layout_codec import LayoutPlanningCounters
+    from .lance_layout_packing import MAX_OWNERS, _SIZE_ERRORS, pack_source_prefix
+    from .migration_codec import hashed
+
+    selected, packet, cursor = [], None, dict(before)
+    frozen = window["action"] == "export"
+    limit = len(window["allowed_plan_hashes"]) if frozen else MAX_OWNERS
+    for index in range(limit):
+        source.check_time()
+        fits = _prefix_fits(source, packet)
+        if not fits and selected:
+            break
+        planning = LayoutPlanningCounters(qualification)
+        owner = source.owner(planning=planning)
+        plan = planning.finish(reg, owner, "history", [_json(source.following)])
+        source.check_time()
+        if frozen and window["allowed_plan_hashes"][index] != hashed(plan):
+            raise Refusal("conflict", "layout_owner_plan_mismatch")
+        if not fits or plan["expansion"]["batches"] != 1:
+            if not selected and not frozen:
+                return dict(fallback_plan=plan)
+            break
+        exported = dict(
+            status="ok",
+            reason=None,
+            source_binding=source.binding,
+            cursor_before=dict(cursor),
+            cursor_after=dict(cursor),
+            entries=[],
+            finalizations=[],
+            counts=empty_counts(),
+            phase="history",
+            phase_complete=False,
+            complete=False,
+            coverage="incomplete",
+            frame_bytes=0,
+        )
+        _export_owner(source, exported, cursor, owner=owner)
+        for _ in range(3):
+            exported["frame_bytes"] = len(frame_bytes(exported))
+        try:
+            candidate = pack_source_prefix(
+                reg, before, [*selected, dict(plan=plan, export=exported)]
+            )
+        except ValueError as exc:
+            if str(exc) not in _SIZE_ERRORS | {"whole owner prefix required"}:
+                raise
+            if not selected and not frozen:
+                return dict(fallback_plan=plan)
+            break
+        if len(candidate["components"]) != len(selected) + 1:
+            break
+        packet, selected, cursor = (
+            candidate,
+            candidate["components"],
+            dict(exported["cursor_after"]),
+        )
+        if index + 1 == limit or not source.advance(cursor):
+            break
+    if packet is None or (frozen and len(selected) != limit):
+        raise Refusal("conflict", "layout_source_prefix_mismatch")
+    source.check_time()
+    return dict(prefix=packet)
+
+
+def _prefix_response(source, descriptor, before, window, result, payload):
+    from .lance_layout_packing import prefix_result
+
+    try:
+        if result["status"] == "ok":
+            if result["complete"]:
+                payload = dict(terminal=result)
+            wrapped = prefix_result(descriptor, before, window, **payload)
+            source.check_time()
+            return wrapped
+    except Refusal as exc:
+        result.update(status=exc.status, reason=exc.reason)
+    except MemoryError:
+        result.update(status="qualification_required", reason="native_decode_summary_limit")
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result.update(status="qualification_required", reason="layout_source_frame_limit")
+    return prefix_result(
+        descriptor, before, window, status=result["status"], reason=result["reason"]
+    )
