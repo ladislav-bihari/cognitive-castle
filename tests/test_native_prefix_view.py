@@ -8,7 +8,8 @@ import sys
 
 def _reader_worker():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from cognitive_castle.memory_history_worker import _install_guards, _admit_storage
+    from cognitive_castle.memory_history_worker import _install_guards
+    from cognitive_castle.native_source_worker import _admit_source
     from cognitive_castle.semantic_profile import decode_frame
 
     os.umask(0o077)
@@ -16,7 +17,13 @@ def _reader_worker():
     if request.keys() != {"descriptor", "_host_pid"}:
         raise ValueError("fixed prefix-reader request")
     _install_guards()
-    refused = _admit_storage(request)
+
+    def no_sqlite(event, args):
+        if event == "sqlite3.connect":
+            raise PermissionError("native source export forbids SQLite connections")
+
+    sys.addaudithook(no_sqlite)
+    refused = _admit_source(request)
     if refused is not None:
         return refused
     from cognitive_castle.native_source_export import Source
@@ -82,7 +89,6 @@ def _reader_worker():
             assert reader.dataset is dataset and reader.cursor == following
         assert next_header is None and len(opens) == 1
         source.validate_files()
-        assert "sqlite3" not in sys.modules
         return dict(status="ok", rows=rows, native_opens=len(opens), cursor=dict(reader.cursor))
     finally:
         if source.reader is not None:
@@ -97,7 +103,15 @@ if __name__ == "__main__":
             raise ValueError("fixed prefix-reader invocation")
         output = _reader_worker()
     except Exception as exc:
-        output = dict(status="unavailable", reason="prefix_fixture_" + type(exc).__name__)
+        trace = exc.__traceback__
+        while trace.tb_next is not None:
+            trace = trace.tb_next
+        output = dict(
+            status="unavailable",
+            reason="prefix_fixture_" + type(exc).__name__,
+            failure_file=Path(trace.tb_frame.f_code.co_filename).name,
+            failure_line=trace.tb_lineno,
+        )
     raw = json.dumps(output, ensure_ascii=True, allow_nan=False).encode()
     if len(raw) > 512 * 1024:
         raw = b'{"status":"unavailable","reason":"prefix_fixture_frame"}'
