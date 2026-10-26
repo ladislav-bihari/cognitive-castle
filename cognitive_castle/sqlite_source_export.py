@@ -394,6 +394,98 @@ class Source:
             result.append(value)
         return result
 
+    def prefix_bounds(self, phase, key):
+        """Conservative scalar/129-ID preview, never full owner verification."""
+        self.check_time()
+        overflow = dict(rows=bulk.MAX_ENTRIES + 1, decoded=0)
+        if phase == "audit":
+            table, encoded = key
+            args = json.loads(encoded)
+            where = " AND ".join(column + "=?" for column in TABLES[table][1].split())
+        elif phase == "history":
+            table, where, args = "history_occurrences", "identity=?", key
+        elif phase == "live":
+            table, where, args = "receipts", "namespace=? AND request_id=?", key
+        else:
+            raise Refusal("corrupt", "prefix_preview_phase")
+        lengths = ",".join(
+            "coalesce(length(CAST(" + column + " AS BLOB)),0)"
+            for column in TABLES[table][0].split()
+        )
+        if phase != "audit":
+            lengths = (
+                "length(CAST(ids AS BLOB)),("
+                + "+".join(
+                    "coalesce(length(CAST(" + column + " AS BLOB)),0)"
+                    for column in TABLES[table][0].split()
+                )
+                + ")"
+            )
+        row = self.conn.execute(f"SELECT {lengths} FROM {table} WHERE {where}", args).fetchone()
+        if row is None:
+            raise Refusal("corrupt", "missing_prefix_preview")
+        for value in row:
+            bulk.integer(value)
+        if phase == "audit":
+            return dict(rows=1, decoded=sum(row))
+        ids_bytes, decoded = row
+        # JSON parsing is attempted only after this original scalar admission.
+        # Extra whitespace conservatively selects the unchanged single-owner path.
+        if ids_bytes > 129 * 75 + 2:
+            return overflow
+        raw_ids = list(
+            self.conn.execute(
+                f"SELECT substr(CAST(j.value AS BLOB),1,72),j.type FROM {table} r,json_each(r.ids) j WHERE {where} LIMIT 129",
+                args,
+            )
+        )
+        if len(raw_ids) >= 129:
+            return overflow
+        ids = []
+        for identity, kind in raw_ids:
+            if kind != "text" or not isinstance(identity, bytes):
+                raise Refusal("corrupt", "prefix_member_type")
+            ids.append(bulk.identity(identity.decode("utf-8"), "memory"))
+        if phase == "history" and "history_occurrence_chunks" in self.tables:
+            relational = list(
+                self.conn.execute(
+                    "SELECT substr(CAST(chunk_id AS BLOB),1,72) FROM history_occurrence_chunks WHERE identity=? ORDER BY chunk_id LIMIT 129",
+                    key,
+                )
+            )
+            if len(relational) >= 129:
+                return overflow
+            if not ids:
+                ids = [bulk.identity(item[0].decode("utf-8"), "memory") for item in relational]
+        if phase == "history" and "history_aliases" in self.tables:
+            query = (
+                "SELECT length(CAST(alias AS BLOB)) FROM history_aliases WHERE identity=? LIMIT 129"
+            )
+            plan = list(self.conn.execute("EXPLAIN QUERY PLAN " + query, key))
+            if not any(
+                "SEARCH history_aliases" in item[3] and "ANY(" not in item[3] for item in plan
+            ):
+                return overflow
+            aliases = list(self.conn.execute(query, key))
+            if len(aliases) >= 129:
+                return overflow
+            for item in aliases:
+                bulk.integer(item[0])
+                decoded += item[0]
+        for identity in ids:
+            self.check_time()
+            sizes = self.conn.execute(
+                "SELECT length(CAST(text AS BLOB)),length(CAST(provenance AS BLOB)) FROM chunks WHERE id=?",
+                (identity,),
+            ).fetchone()
+            if sizes is None:
+                raise Refusal("corrupt", "missing_prefix_member")
+            for size in sizes:
+                bulk.integer(size)
+                decoded += size
+        self.check_time()
+        return dict(rows=2 * len(ids) + 5, decoded=decoded)
+
     def member_ids(self, phase, key):
         """Validate and stream both original membership representations in order."""
         if phase == "audit":
