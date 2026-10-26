@@ -33,6 +33,7 @@ class NativeProjectedRow:
         )
         if self.dataset.version != version:
             raise _HistoryError("changed")
+        self._version = version
         names = self.dataset.schema.names
         if (
             any(name not in names for name in ("id", "text", "metadata_json"))
@@ -46,6 +47,7 @@ class NativeProjectedRow:
             raise _HistoryError("quota")
         self._header = None
         self._fragment = None
+        self._bound_next = None
 
     def _scan(self, columns, fragment, offset):
         scanner = self.dataset.scanner(
@@ -112,6 +114,19 @@ class NativeProjectedRow:
         ):
             raise _HistoryError("corrupt")
         self._header, self._fragment = dict(header), fragment
+        # Keep the validated original following cursor independent of the
+        # mutable header returned to a caller.
+        self._bound_next = tuple(header[name] for name in ("fragment", "offset", "row_address"))
+
+    def advance(self):
+        """Read the next original occurrence on this same immutable Dataset."""
+        if self.dataset is None or self._header is None or self._bound_next is None:
+            raise _HistoryError("corrupt")
+        if self.dataset.version != self._version:
+            raise _HistoryError("changed")
+        self.cursor = dict(zip(("fragment", "offset", "row_address"), self._bound_next))
+        self._header = self._fragment = self._bound_next = None
+        return self.header_or_none()
 
     def header(self):
         header = self.header_or_none()
@@ -192,4 +207,5 @@ class NativeProjectedRow:
 
     def close(self):
         self._header = self._fragment = self.dataset = None
+        self._bound_next = None
         self.fragments = []
