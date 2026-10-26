@@ -791,6 +791,7 @@ def test_partition_protocol_owner_span_checks_actual_reused_bytes_and_first_owne
     physical = old + new
     by_id = {row["id"]: row for row in old}
     store = object.__new__(_PartitionStore)
+    store.intent_id = None  # A committed read, as initialized by the real constructor.
     store.qualification = SimpleNamespace(
         owner=owner2["owner"], source_binding=owner2["source_binding"]
     )
