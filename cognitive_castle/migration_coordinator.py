@@ -35,7 +35,7 @@ def _native_fixture_tick(session, registration):
     return _tick(session, registration, native=True)
 
 
-def _layout_replay(session, generation, arguments, pending):
+def _layout_replay(session, generation, arguments, pending, *, defer_append=False):
     from . import lance_layout_codec as layout
 
     for attempt in range(2):
@@ -61,6 +61,11 @@ def _layout_replay(session, generation, arguments, pending):
                 raise ValueError("layout existing replay required")
         except (ValueError, KeyError, TypeError):
             return None, {"status": "conflict", "reason": "layout_replay_contract"}, phase
+        if defer_append:
+            # A later caller regenerates from the durable pending intent and
+            # proves actual existing bytes. No proof or source body is saved.
+            ready = session._ready()
+            return None, ready or {"status": "in_progress", "reason": None}, "verify_replay"
     raise AssertionError("closed replay outcomes")
 
 
@@ -229,6 +234,16 @@ def _layout_check_owners(session, generation, pending, exported, version, refuse
 
 
 def _layout_fixture_tick(session, registration):
+    """Original all-in-one diagnostic; never extends its caller's deadline."""
+    return _layout_tick(session, registration, defer_append=False)
+
+
+def _layout_fixture_step(session, registration):
+    """One bounded background step; a fresh append remains unverified pending work."""
+    return _layout_tick(session, registration, defer_append=True)
+
+
+def _layout_tick(session, registration, *, defer_append):
     """Private single-owner layout protocol; authority stays in registered stores."""
     from . import lance_layout_codec as layout
 
@@ -321,7 +336,9 @@ def _layout_fixture_tick(session, registration):
         entries=exported["entries"],
         finalizations=exported["finalizations"],
     )
-    batch, failure, phase = _layout_replay(session, generation, arguments, pending)
+    batch, failure, phase = _layout_replay(
+        session, generation, arguments, pending, defer_append=defer_append
+    )
     if failure is not None:
         return refused(failure, phase)
     try:
