@@ -4,8 +4,9 @@ These definitions reuse the original protected SQLite source and the frozen
 small-case qualification. They do not activate a production profile. No test
 creates an original-source cursor or substitutes metadata for an actual proof.
 The tail case has exactly520 original one-character historical chunks. Its
-fixed packing has19 field pages +1040 member/record entries, then one owner and
-five batch receipts:1065 physical rows. It is not an ordinary remember shape.
+fixed packing has20 field pages +1040 member/record entries, then one owner and
+five batch receipts:1066 physical rows. Original SQL TEXT provenance remains a
+quoted JSON string in scope evidence, requiring17 scope pages.
 """
 
 import copy
@@ -527,7 +528,7 @@ def test_native_layout_exact_tail_refuses_then_bootstraps_and_resumes_original_i
         assert len(routes) == 257 and {row["version"] for row in routes} == {ordinal + 1}
         if ordinal == 0:
             plan = observed.arguments["queue_layout_bind:1"][2]["plans"][0]
-            assert plan["members"] == 520 and plan["expansion"]["physical_rows"] == 1065
+            assert plan["members"] == 520 and plan["expansion"]["physical_rows"] == 1066
             assert plan["expansion"]["batches"] == plan["expansion"]["fragments"] == 5
     before = native._queue_state(registration)
     assert before["pending"] is None and before["staging_cursor"]["entry"] == 768
@@ -551,10 +552,10 @@ def test_native_layout_exact_tail_refuses_then_bootstraps_and_resumes_original_i
     published, final = native._tick(registration)
     assert published["status"] == "ok", published
     final_args = final.arguments["layout_import_batch:1"][2]
-    assert len(final_args["entries"]) == 35 and len(final_args["finalizations"]) == 1
+    assert len(final_args["entries"]) == 36 and len(final_args["finalizations"]) == 1
     owner = final_args["finalizations"][0]
     assert {field: facts["pages"] for field, facts in owner["fields"].items()} == dict(
-        metadata=1, columns=1, scopes=16, descriptor=1
+        metadata=1, columns=1, scopes=17, descriptor=1
     )
     assert owner["members"] == owner["text_bytes"] == owner["text_chars"] == 520
     assert owner["text_hash"] == hashlib.sha256(b"x" * 520).hexdigest() and owner["live"] is None
