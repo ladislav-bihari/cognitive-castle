@@ -48,8 +48,10 @@ def source_case():
             self.cursor, self.index = dict(before), 0
             self.dataset = object()
             self.advances = 0
+            self.header_lookups = 0
 
         def header_or_none(self):
+            self.header_lookups += 1
             return headers[self.index] if self.index < len(headers) else None
 
         def advance(self):
@@ -117,6 +119,7 @@ def test_source_advances_one_view_without_resetting_cumulative_budgets():
     assert not source.advance(closed_cursor(source, before))
     assert source.raw_before == dict(fragment=0, offset=2, row_address=1)
     assert len(readers) == 1
+    assert reader.header_lookups == 3  # Initial row, next row, and one EOF read.
 
 
 @pytest.mark.parametrize("damage", ["key", "partial", "phase", "reader"])

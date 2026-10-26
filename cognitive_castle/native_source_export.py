@@ -170,6 +170,30 @@ class Source:
         )
         self.validate_native()
         self.header = self.reader.header_or_none()
+        return self._bind_owner(cursor)
+
+    def advance(self, cursor):
+        """Advance only at the original closed owner boundary on the same view."""
+        self.check_time()
+        validate_cursor(
+            cursor, self.binding, self.descriptor["store_id"], self.descriptor["start_cursor"]
+        )
+        if (
+            self.reader is None
+            or cursor["phase"] != "history"
+            or cursor["owner"] is not None
+            or cursor["key"] != [_json(self.following)]
+        ):
+            raise Refusal("corrupt", "native_prefix_cursor_mismatch")
+        following = dict(self.following)
+        header = self.reader.advance()
+        if self.reader.cursor != following:
+            raise Refusal("corrupt", "native_prefix_reader_cursor")
+        self.raw_before = following
+        self.header = header
+        return self._bind_owner(cursor)
+
+    def _bind_owner(self, cursor):
         if self.header is None:
             if cursor["owner"] is not None:
                 raise Refusal("corrupt", "native_active_owner_exhausted")
