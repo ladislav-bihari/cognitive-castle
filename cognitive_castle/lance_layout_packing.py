@@ -10,9 +10,30 @@ from itertools import islice
 from . import bulk_exact_codec as bulk
 from . import lance_layout_codec as layout
 from . import migration_codec as migration
+from .canonical_records import _string
 
 PREFIX = "lance-layout-source-prefix-v1"
 MAX_OWNERS = 8
+_REQUEST_FIELDS = {
+    "format",
+    "action",
+    "generation",
+    "qualification_hash",
+    "allowed_plan_hashes",
+    "packing",
+}
+_REPLY_FIELDS = {
+    "format",
+    "status",
+    "reason",
+    "action",
+    "source_binding",
+    "cursor_before",
+    "cursor_after",
+    "prefix",
+    "fallback_plan",
+    "terminal",
+}
 _FIELDS = {
     "format",
     "source_binding",
@@ -74,9 +95,10 @@ def _packet(reg, before, components):
     result = dict(evidence, prefix_hash=migration.hashed(evidence), frame_bytes=0)
     for _ in range(3):
         result["frame_bytes"] = len(migration.frame_bytes(result))
-    # Budget the complete fixed source-worker success envelope as well as its
-    # inner packet; a nearly full packet cannot consume the wrapper's bytes.
-    migration.frame_bytes(dict(status="ok", reason=None, prefix=result))
+    # Both real worker replies must fit, including potentially long original
+    # before/after keys. The packet alone is not the wire envelope.
+    for action in ("prepare", "export"):
+        migration.frame_bytes(_prefix_envelope(reg, before, action, prefix=result))
     return result
 
 
@@ -147,3 +169,122 @@ def admit_source_prefix(value, reg, fixed_target):
     ):
         raise ValueError("admitted original source prefix")
     return _packet(reg, value["cursor_before"], components[: len(hashes)])
+
+
+def validate_prefix_request(value, descriptor, before):
+    layout._fields(value, _REQUEST_FIELDS, "source prefix request")
+    if value["format"] != layout.PREFIX_SOURCE_REQUEST or value["action"] not in {
+        "prepare",
+        "export",
+    }:
+        raise ValueError("source prefix request version")
+    # Reuse all original generation/qualification/registration/cursor checks.
+    # The legacy plan format remains independent of this explicit new version.
+    original = dict(value, format=layout.SOURCE_REQUEST, action="plan", allowed_plan_hashes=[])
+    layout.validate_layout_source_window(original, descriptor, before)
+    hashes = value["allowed_plan_hashes"]
+    if before["owner"] is not None:
+        raise ValueError("whole owner prefix request")
+    if not isinstance(hashes, list) or (
+        len(hashes) != 0 if value["action"] == "prepare" else not 1 <= len(hashes) <= MAX_OWNERS
+    ):
+        raise ValueError("source prefix selection bound")
+    for digest in hashes:
+        bulk.sha(digest)
+    if len(set(hashes)) != len(hashes):
+        raise ValueError("duplicate source prefix plan")
+    migration.frame_bytes(dict(descriptor=descriptor, cursor=before, layout=value))
+    return value
+
+
+def _prefix_envelope(
+    reg, before, action, *, prefix=None, fallback_plan=None, terminal=None, status="ok", reason=None
+):
+    after = (
+        prefix["cursor_after"]
+        if status == "ok" and action == "export" and prefix is not None
+        else before
+    )
+    return dict(
+        format=layout.PREFIX_SOURCE_RESULT,
+        status=status,
+        reason=reason,
+        action=action,
+        source_binding=reg["source_binding"],
+        cursor_before=deepcopy(before),
+        cursor_after=deepcopy(after),
+        prefix=deepcopy(prefix),
+        fallback_plan=deepcopy(fallback_plan),
+        terminal=deepcopy(terminal),
+    )
+
+
+def prefix_result(
+    descriptor,
+    before,
+    window,
+    *,
+    prefix=None,
+    fallback_plan=None,
+    terminal=None,
+    status="ok",
+    reason=None,
+):
+    validate_prefix_request(window, descriptor, before)
+    reg = migration.registration(descriptor, window["generation"]["path"])
+    result = _prefix_envelope(
+        reg,
+        before,
+        window["action"],
+        prefix=prefix,
+        fallback_plan=fallback_plan,
+        terminal=terminal,
+        status=status,
+        reason=reason,
+    )
+    return validate_prefix_result(result, window, descriptor, before)
+
+
+def validate_prefix_result(value, window, descriptor, before):
+    validate_prefix_request(window, descriptor, before)
+    layout._fields(value, _REPLY_FIELDS, "source prefix reply")
+    migration.frame_bytes(value)
+    reg = migration.registration(descriptor, window["generation"]["path"])
+    _string(value["status"], 64, "source prefix status")
+    if value["reason"] is not None:
+        _string(value["reason"], 1024, "source prefix reason")
+    migration.cursor(value["cursor_before"], reg)
+    migration.cursor(value["cursor_after"], reg)
+    if (
+        value["format"] != layout.PREFIX_SOURCE_RESULT
+        or value["action"] != window["action"]
+        or value["source_binding"] != reg["source_binding"]
+        or value["cursor_before"] != before
+    ):
+        raise ValueError("source prefix reply binding")
+    payloads = [value[name] for name in ("prefix", "fallback_plan", "terminal")]
+    if value["status"] != "ok":
+        if any(item is not None for item in payloads) or value["cursor_after"] != before:
+            raise ValueError("source prefix refusal progress")
+        return value
+    if value["reason"] is not None or sum(item is not None for item in payloads) != 1:
+        raise ValueError("source prefix success payload")
+    packet = value["prefix"]
+    if packet is not None:
+        validate_source_prefix(packet, reg, before)
+        if window["action"] == "export" and window["allowed_plan_hashes"] != [
+            migration.hashed(part["plan"]) for part in packet["components"]
+        ]:
+            raise ValueError("frozen original source prefix")
+    elif window["action"] != "prepare":
+        raise ValueError("frozen source prefix cannot fall back")
+    elif value["fallback_plan"] is not None:
+        layout.validate_owner_plan(value["fallback_plan"], reg)
+    else:
+        terminal = migration.validate_export(value["terminal"], reg, before)
+        if terminal["status"] != "ok" or not terminal["complete"]:
+            raise ValueError("source prefix terminal evidence")
+    after = packet["cursor_after"] if window["action"] == "export" else before
+    if value["cursor_after"] != after:
+        raise ValueError("source prefix outer cursor")
+    return value

@@ -24,6 +24,8 @@ BATCH_RESULT = "lance-layout-batch-result-v1"
 QUALIFICATION = "lance-layout-qualification-v1"
 SOURCE_REQUEST = "lance-layout-source-request-v1"
 SOURCE_RESULT = "lance-layout-source-result-v1"
+PREFIX_SOURCE_REQUEST = "lance-layout-source-prefix-request-v1"
+PREFIX_SOURCE_RESULT = "lance-layout-source-prefix-result-v1"
 PARTITION_PIN = "lance-layout-partition-pin-v1"
 GROUPED_OWNER_PROOF = "lance-layout-owner-verification-v1"
 PACKING = "bulk-v1-ascii-layout-1"
@@ -355,6 +357,10 @@ def validate_directory_page(value, qualification, envelope):
 
 
 def validate_layout_source_window(value, descriptor, before):
+    if isinstance(value, dict) and value.get("format") == PREFIX_SOURCE_REQUEST:
+        from .lance_layout_packing import validate_prefix_request
+
+        return validate_prefix_request(value, descriptor, before)
     _fields(
         value,
         {"format", "action", "generation", "qualification_hash", "allowed_plan_hashes", "packing"},
@@ -386,6 +392,10 @@ def validate_layout_source_window(value, descriptor, before):
 
 
 def validate_layout_source_result(value, window, descriptor, before):
+    if isinstance(window, dict) and window.get("format") == PREFIX_SOURCE_REQUEST:
+        from .lance_layout_packing import validate_prefix_result
+
+        return validate_prefix_result(value, window, descriptor, before)
     validate_layout_source_window(window, descriptor, before)
     _fields(
         value,
