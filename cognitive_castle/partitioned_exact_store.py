@@ -15,6 +15,7 @@ import tempfile
 from . import bulk_exact_codec as bulk
 from . import lance_layout_codec as layout
 from . import migration_codec as migration
+from . import lance_layout_packed as packed
 from .bulk_exact_store import (
     OrderedBulkExactStore,
     LOOKUP_IDS,
@@ -253,18 +254,25 @@ class PartitionedExactStore:
         if context is not None:
             pending = authority.pending(context["intent_id"])
             owner_refs = pending["owners"]
-            if len(owner_refs) != 1:
+            if pending.get("format") != packed.INTENT and len(owner_refs) != 1:
                 raise _StoreError("conflict")
             if operation == "bulk_owner":
-                if arguments != {"owner": owner_refs[0]["owner"], "version": context["version"]}:
-                    raise _StoreError("conflict")
-            elif owner_refs[0]["classification"] != "live" or owner_refs[0]["source_key"] != [
-                arguments["namespace"],
-                arguments["key"],
-            ]:
+                matching = [
+                    ref
+                    for ref in owner_refs
+                    if arguments == {"owner": ref["owner"], "version": context["version"]}
+                ]
+            else:
+                matching = [
+                    ref
+                    for ref in owner_refs
+                    if ref["classification"] == "live"
+                    and ref["source_key"] == [arguments["namespace"], arguments["key"]]
+                ]
+            if len(matching) != 1:
                 raise _StoreError("conflict")
             pid = pending["target"]["partition_id"]
-            owner = owner_refs[0]["owner"]
+            owner = matching[0]["owner"]
             source_binding = pending["source_binding"]
         else:
             resolved = authority.resolve(identities)
@@ -312,96 +320,109 @@ class PartitionedExactStore:
 
         return self._run(maintain)
 
+    def _observe_owner(self, store, dataset, pending, reference):
+        """Observe original marker and LIVE receipt on the already opened home."""
+        pid, owner = pending["target"]["partition_id"], reference["owner"]
+        version = dataset.version
+        identities = [owner]
+        if reference["classification"] == "live":
+            identities.append("receipt:" + migration.hashed(reference["source_key"]))
+        # Owner and receipt observations have no foreign/older route
+        # exception. Canonical record hydration below retains its usual
+        # bounded resolver and original first-owner visibility checks.
+        resolved = store._resolve_ids(identities)
+        locations = {row["id"]: row for row in [*resolved["routes"], *resolved["claims"]]}
+        if resolved["status"] != "ok" or set(locations) != set(identities):
+            raise _StoreError("unavailable")
+        if any(
+            row["partition_id"] != pid
+            or row["gate"] != owner
+            or row.get("version") not in (None, version)
+            for row in locations.values()
+        ):
+            raise _StoreError("conflict")
+        found = store._lookup_rows(dataset, identities, checked=True)
+        if set(found) != set(identities):
+            raise _StoreError("corrupt")
+        manifest = decode_receipt(found[owner])
+        try:
+            observed_reference = migration.owner_reference(
+                manifest, reference["source_phase"], reference["source_key"]
+            )
+        except (ValueError, TypeError, KeyError):
+            raise _StoreError("corrupt") from None
+        if (
+            manifest["state"] != "published_owner"
+            or manifest["source_binding"] != pending["source_binding"]
+            or observed_reference != reference
+        ):
+            raise _StoreError("corrupt")
+        live = manifest["live"]
+        live_proof = None
+        if live is not None:
+            if reference["source_key"] != [live["namespace"], live["key"]]:
+                raise _StoreError("corrupt")
+            row = found[identities[1]]
+            stored, _ = store._verify_receipt(dataset, row, live["namespace"], live["key"])
+            if row["digest"] != live["digest"] or stored != live["receipt"]:
+                raise _StoreError("corrupt")
+            live_proof = dict(
+                namespace=live["namespace"],
+                key=live["key"],
+                digest=row["digest"],
+                receipt_hash=migration.hashed(stored),
+            )
+        return dict(
+            owner=manifest["owner"],
+            manifest_hash=migration.hashed(manifest),
+            partition_id=pid,
+            version=dataset.version,
+            live_receipt_ids=[] if live is None else list(stored["ids"]),
+            live=live_proof,
+        ), manifest
+
     def layout_verify_owners(self, intent_id, version):
-        """One current owner/LIVE observation; actual import replay stays separate."""
+        """Observe every original owner on one handle; import replay is separate."""
         bulk.sha(intent_id)
         layout.positive(version)
 
         def verify(authority):
             pending = authority.pending(intent_id)
-            if len(pending["owners"]) != 1:
+            is_packed = pending.get("format") == packed.INTENT
+            if is_packed:
+                packed.validate_prefix_intent(
+                    pending,
+                    migration.registration(pending["window"]["descriptor"], pending["destination"]),
+                )
+            elif len(pending["owners"]) != 1:
                 raise _StoreError("conflict")
-            reference = pending["owners"][0]
-            pid, owner = pending["target"]["partition_id"], reference["owner"]
             store = _PartitionStore(
                 authority,
-                pid,
-                owner,
+                pending["target"]["partition_id"],
+                pending["owners"][0]["owner"],
                 pending["source_binding"],
                 intent_id=intent_id,
                 proof_version=version,
             )
             try:
                 dataset, _ = store._read(version=version)
-                identities = [owner]
-                if reference["classification"] == "live":
-                    identities.append("receipt:" + migration.hashed(reference["source_key"]))
-                # Owner and receipt observations have no foreign/older route
-                # exception. Canonical record hydration below retains its usual
-                # bounded resolver and original first-owner visibility checks.
-                resolved = store._resolve_ids(identities)
-                locations = {row["id"]: row for row in [*resolved["routes"], *resolved["claims"]]}
-                if resolved["status"] != "ok" or set(locations) != set(identities):
-                    raise _StoreError("unavailable")
-                if any(
-                    row["partition_id"] != pid
-                    or row["gate"] != owner
-                    or row.get("version") not in (None, version)
-                    for row in locations.values()
-                ):
-                    raise _StoreError("conflict")
-                found = store._lookup_rows(dataset, identities, checked=True)
-                if set(found) != set(identities):
-                    raise _StoreError("corrupt")
-                manifest = decode_receipt(found[owner])
-                try:
-                    observed_reference = migration.owner_reference(
-                        manifest, reference["source_phase"], reference["source_key"]
-                    )
-                except (ValueError, TypeError, KeyError):
-                    raise _StoreError("corrupt") from None
-                if (
-                    manifest["state"] != "published_owner"
-                    or manifest["source_binding"] != pending["source_binding"]
-                    or observed_reference != reference
-                ):
-                    raise _StoreError("corrupt")
-                live = manifest["live"]
-                live_proof = None
-                if live is not None:
-                    if reference["source_key"] != [live["namespace"], live["key"]]:
-                        raise _StoreError("corrupt")
-                    row = found[identities[1]]
-                    stored, _ = store._verify_receipt(dataset, row, live["namespace"], live["key"])
-                    if row["digest"] != live["digest"] or stored != live["receipt"]:
-                        raise _StoreError("corrupt")
-                    live_proof = dict(
-                        namespace=live["namespace"],
-                        key=live["key"],
-                        digest=row["digest"],
-                        receipt_hash=migration.hashed(stored),
-                    )
+                observations, manifests = [], []
+                for reference in pending["owners"]:
+                    observation, manifest = self._observe_owner(store, dataset, pending, reference)
+                    observations.append(observation)
+                    manifests.append(manifest)
                 result = dict(
                     status="ok",
                     format=layout.GROUPED_OWNER_PROOF,
                     intent_hash=migration.hashed(pending),
-                    owners=[
-                        dict(
-                            owner=manifest["owner"],
-                            manifest_hash=migration.hashed(manifest),
-                            partition_id=pid,
-                            version=dataset.version,
-                            live_receipt_ids=[] if live is None else list(stored["ids"]),
-                            live=live_proof,
-                        )
-                    ],
+                    owners=observations,
                 )
-                # The same strict transport check runs in the coordinator
-                # against freshly regenerated source. Here it also preflights
-                # the complete bounded response before leaving this handle.
-                layout.validate_grouped_owner_proof(
-                    result, pending, {"finalizations": [manifest]}, version
+                validator = (
+                    packed.validate_grouped_owner_proof
+                    if is_packed
+                    else layout.validate_grouped_owner_proof
                 )
+                validator(result, pending, {"finalizations": manifests}, version)
                 return result
             finally:
                 store.release_remote()
@@ -789,6 +810,21 @@ class _PartitionStore(OrderedBulkExactStore):
     def _owner_rows(self, dataset, owner, pending):
         span = self.authority.span(owner)
         geometry = self._geometry(dataset)
+        if self.intent_id is not None:
+            intent = self.authority.pending(self.intent_id)
+            if intent.get("format") == packed.INTENT:
+                from .lance_layout_packed_rows import owner_spans
+
+                mutation = self.registry["mutation"]
+                if span != owner_spans(intent, mutation).get(owner):
+                    raise _StoreError("corrupt")
+                if span["next_row"] > geometry["physical_rows"]:
+                    if geometry != _geometry(mutation["before"]):
+                        raise _StoreError("corrupt")
+                    # Later owners have no old rows before this exact append.
+                    if span["first_row"] < geometry["physical_rows"]:
+                        raise _StoreError("corrupt")
+                    return
         start = span["first_row"]
         end = min(span["next_row"], geometry["physical_rows"])
         if not 0 <= start <= end:
@@ -822,7 +858,34 @@ class _PartitionStore(OrderedBulkExactStore):
             raise _StoreError("corrupt")
 
     def _verify_owner(self, dataset, manifest, pending):
-        if (manifest["owner"], manifest["source_binding"]) != (
+        intent = self.authority.pending(self.intent_id) if self.intent_id is not None else None
+        if intent is not None and intent.get("format") == packed.INTENT:
+            references = [r for r in intent["owners"] if r["owner"] == manifest["owner"]]
+            if (
+                len(references) != 1
+                or manifest["source_binding"] != self.qualification.source_binding
+                or migration.owner_reference(
+                    manifest, references[0]["source_phase"], references[0]["source_key"]
+                )
+                != references[0]
+            ):
+                raise _StoreError("corrupt")
+            if pending:
+                routes = {r["id"]: r for r in intent["routes"][:-1]}
+                expected = set(self.registry["mutation"]["new_ids"]) - {intent["routes"][-1]["id"]}
+                if set(pending) != expected or any(
+                    identity not in routes
+                    or row["id"] != identity
+                    or migration.hashed(row) != routes[identity]["row_hash"]
+                    for identity, row in pending.items()
+                ):
+                    raise _StoreError("corrupt")
+                pending = {
+                    route["id"]: pending[route["id"]]
+                    for route in intent["routes"][:-1]
+                    if route["gate"] == manifest["owner"] and route["id"] in pending
+                }
+        elif (manifest["owner"], manifest["source_binding"]) != (
             self.qualification.owner,
             self.qualification.source_binding,
         ):
@@ -872,8 +935,15 @@ class _PartitionStore(OrderedBulkExactStore):
     def _before_append(self, dataset, rows):
         self.release_remote()
         mutation = self.registry["mutation"]
-        if {row["id"] for row in rows} != set(mutation["new_ids"]):
+        if len(rows) != len(mutation["new_ids"]) or {row["id"] for row in rows} != set(
+            mutation["new_ids"]
+        ):
             raise _StoreError("conflict")
+        intent = self.authority.pending(self.intent_id)
+        if intent.get("format") == packed.INTENT:
+            from .lance_layout_packed_rows import ordered_rows
+
+            rows[:] = ordered_rows(intent, mutation, rows)
         super()._before_append(dataset, rows)
 
     def _after_append(self, dataset):
