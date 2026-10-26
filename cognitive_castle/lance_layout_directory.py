@@ -1554,6 +1554,74 @@ class _NativeLayoutDirectory(LayoutDirectory):
         self.conn.execute("RELEASE castle_prefix_bind")
         return response
 
+    def _prefix_target(self, state, intent):
+        """Validate all original homes and their summed reservation; no writes.
+
+        Kept private until packed prepare, native replay and atomic publication
+        are integrated. A valid packed codec alone never grants queue authority.
+        """
+        from .lance_layout_packed import validate_prefix_intent
+
+        reg = state["registration"]
+        validate_prefix_intent(intent, reg)
+        envelope = state["layout"]["envelope"]
+        codec.validate_envelope(envelope)
+        if (
+            envelope != self.envelope
+            or state["staging_cursor"] != intent["cursor_before"]
+            or state["state"] == "snapshot_export_exhausted"
+            or state["pending"] is not None
+            and state["pending"] != intent
+        ):
+            _conflict()
+        target = intent["target"]
+        pid = target["partition_id"]
+        job = reg["job_id"]
+        homes = self._prefix_homes(job)
+        owners = [o["owner"] for o in intent["owners"]]
+        if set(homes) != {(owner, pid) for owner in owners} or self._prefix_anchor() != (
+            owners[0],
+            pid,
+        ):
+            _conflict()
+        registered = self.partition(pid)
+        mutation = registered["mutation"]
+        if (
+            registered["state"] not in {"empty", "writable"}
+            or registered["active_owner"] != owners[0]
+            or mutation is not None
+            and (
+                state["pending"] is None
+                or mutation["kind"] != "append"
+                or mutation["intent_id"] != intent["intent_id"]
+            )
+        ):
+            _conflict()
+        pin = registered["pin"]
+        placeholder = (pin["physical_rows"],) * 2 + (pin["fragments"],) * 2
+        plans, total = [], dict.fromkeys(codec.EXPANSION, 0)
+        for owner, component in zip(intent["owners"], intent["components"], strict=True):
+            plan = codec.validate_owner_plan(self.owner_plan(owner["owner"]), reg)
+            if (
+                migration.hashed(plan) != component["plan_hash"]
+                or {k: plan[k] for k in migration.OWNER_FIELDS} != owner
+            ):
+                _conflict()
+            span = self.conn.execute(
+                "SELECT first_row,next_row,first_fragment,next_fragment FROM layout_spans WHERE owner=?",
+                (owner["owner"],),
+            ).fetchone()
+            if span is None or any(type(v) is not int for v in span) or tuple(span) != placeholder:
+                raise _StoreError("unavailable")
+            plans.append(plan)
+            total = {k: total[k] + plan["expansion"][k] for k in codec.EXPANSION}
+        if target != codec.target(envelope, pid, plans):
+            _conflict()
+        reservation = codec._expansion(self._partition(pid, envelope))
+        if any(reservation[k] < total[k] for k in codec.EXPANSION):
+            raise _StoreError("unavailable")
+        return target
+
     def _expected_pin(self, registered):
         mutation = registered["mutation"]
         pin = registered["pin"]

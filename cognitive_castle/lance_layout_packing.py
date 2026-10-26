@@ -43,7 +43,13 @@ _FIELDS = {
     "prefix_hash",
     "frame_bytes",
 }
-_SIZE_ERRORS = {"bulk entries", "bulk encoded bytes", "bulk decoded bytes", "export frame limit"}
+_SIZE_ERRORS = {
+    "bulk entries",
+    "bulk encoded bytes",
+    "bulk decoded bytes",
+    "export frame limit",
+    "grouped owner result bound",
+}
 
 
 def _component(value, reg, before):
@@ -85,6 +91,15 @@ def _packet(reg, before, components):
     # Maximum-width interval identity budgets the eventual request, not a short
     # prototype key that would allow a larger last frame.
     bulk.validate_batch("f" * 64, reg["source_binding"], entries, owners)
+    maximum = 2**63 - 1
+    layout._grouped_reply_bound(
+        dict(
+            status="ok",
+            format=layout.GROUPED_OWNER_PROOF,
+            intent_hash="f" * 64,
+            owners=[layout.owner_observation(owner, maximum, maximum) for owner in owners],
+        )
+    )
     evidence = dict(
         format=PREFIX,
         source_binding=reg["source_binding"],
