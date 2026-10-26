@@ -34,7 +34,7 @@ def source_refusal(request, result):
     """Normalize supervisor failures without allowing cursor/completion claims."""
     cursor = request["cursor"]
     if "layout" in request:
-        from .lance_layout_codec import SOURCE_RESULT
+        from .lance_layout_codec import SOURCE_RESULT, PREFIX_SOURCE_REQUEST
         from .canonical_records import _string
 
         status = result.get("status", "unavailable")
@@ -50,6 +50,12 @@ def source_refusal(request, result):
                 _string(reason, 1024, "source reason")
             except ValueError:
                 reason = "source_invalid_response"
+        if request["layout"].get("format") == PREFIX_SOURCE_REQUEST:
+            from .lance_layout_packing import prefix_result
+
+            return prefix_result(
+                request["descriptor"], cursor, request["layout"], status=status, reason=reason
+            )
         wrapped = dict(
             format=SOURCE_RESULT,
             status=status,
