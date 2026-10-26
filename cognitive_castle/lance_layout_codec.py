@@ -956,22 +956,39 @@ def verified_summary(intent, batch, owner_proofs):
     )
 
 
-def validate_grouped_owner_proof(value, intent, exported, version):
-    """Check current actual observations against the original source, not a cache."""
+def owner_observation(manifest, partition_id, version):
+    """Transport shape only; callers still must verify actual canonical evidence."""
+    bulk.validate_owner(manifest)
+    bulk.integer(partition_id)
     positive(version)
-    _fields(value, {"status", "format", "intent_hash", "owners"}, "grouped owner result")
-    bulk.sha(value["intent_hash"])
-    if (
-        value["status"] != "ok"
-        or value["format"] != GROUPED_OWNER_PROOF
-        or value["intent_hash"] != migration.hashed(intent)
-        or len(intent["owners"]) != 1
-        or len(exported["finalizations"]) != 1
-        or not isinstance(value["owners"], list)
-        or len(value["owners"]) != 1
-    ):
-        raise ValueError("single pending owner observations")
-    proof = value["owners"][0]
+    live = manifest["live"]
+    return dict(
+        owner=manifest["owner"],
+        manifest_hash=migration.hashed(manifest),
+        partition_id=partition_id,
+        version=version,
+        live_receipt_ids=[] if live is None else list(live["receipt"]["ids"]),
+        live=None
+        if live is None
+        else dict(
+            namespace=live["namespace"],
+            key=live["key"],
+            digest=live["digest"],
+            receipt_hash=migration.hashed(live["receipt"]),
+        ),
+    )
+
+
+def _grouped_reply_bound(value):
+    if max(len(_json(value).encode()), len(json.dumps(value, allow_nan=False).encode())) > 4096:
+        raise ValueError("grouped owner result bound")
+    return migration.bounded(value)
+
+
+def _validate_owner_observation(proof, owner, manifest, partition_id, version):
+    positive(version)
+    bulk.integer(partition_id)
+    manifest = bulk.validate_owner(manifest)
     _fields(
         proof,
         {"owner", "manifest_hash", "partition_id", "version", "live_receipt_ids", "live"},
@@ -995,14 +1012,12 @@ def validate_grouped_owner_proof(value, intent, exported, version):
         _string(live["key"], 128, "key")
         bulk.sha(live["digest"])
         bulk.sha(live["receipt_hash"])
-    owner = intent["owners"][0]
-    manifest = bulk.validate_owner(exported["finalizations"][0])
     original = manifest["live"]
     if (
         migration.owner_reference(manifest, owner["source_phase"], owner["source_key"]) != owner
         or proof["owner"] != owner["owner"]
         or proof["manifest_hash"] != migration.hashed(manifest)
-        or proof["partition_id"] != intent["target"]["partition_id"]
+        or proof["partition_id"] != partition_id
         or proof["version"] != version
         or ids != owner["live_receipt_ids"]
         or live
@@ -1018,15 +1033,36 @@ def validate_grouped_owner_proof(value, intent, exported, version):
         )
     ):
         raise ValueError("grouped original owner binding")
-    if max(len(_json(value).encode()), len(json.dumps(value, allow_nan=False).encode())) > 4096:
-        raise ValueError("grouped owner result bound")
-    migration.bounded(value)
-    return [
-        {
-            **{key: item for key, item in proof.items() if key != "live"},
-            "live_receipt_ids": list(ids),
-        }
-    ]
+    return {
+        **{key: item for key, item in proof.items() if key != "live"},
+        "live_receipt_ids": list(ids),
+    }
+
+
+def validate_grouped_owner_proof(value, intent, exported, version):
+    """Check current actual observations against the original source, not a cache."""
+    positive(version)
+    _fields(value, {"status", "format", "intent_hash", "owners"}, "grouped owner result")
+    bulk.sha(value["intent_hash"])
+    if (
+        value["status"] != "ok"
+        or value["format"] != GROUPED_OWNER_PROOF
+        or value["intent_hash"] != migration.hashed(intent)
+        or len(intent["owners"]) != 1
+        or len(exported["finalizations"]) != 1
+        or not isinstance(value["owners"], list)
+        or len(value["owners"]) != 1
+    ):
+        raise ValueError("single pending owner observations")
+    proof = _validate_owner_observation(
+        value["owners"][0],
+        intent["owners"][0],
+        exported["finalizations"][0],
+        intent["target"]["partition_id"],
+        version,
+    )
+    _grouped_reply_bound(value)
+    return [proof]
 
 
 def validate_layout_verified(value, intent):
