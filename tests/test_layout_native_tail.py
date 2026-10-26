@@ -157,6 +157,10 @@ import test_layout_native_integration as native  # noqa: E402
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="owned supervision")
 
+# A separate deferred-step qualification reuses every geometry/fidelity assertion.
+# The original all-in-one diagnostic keeps its own fixed47-start schedule.
+EXACT_TAIL_STARTS = 47
+
 # Proposed complete retained-tree diagnostic ceiling, including source, queue,
 # both registered partitions and exact/tmp; no exclusions or cleanup.
 MAX_TREE_ENTRIES = 2048
@@ -575,6 +579,6 @@ def test_native_layout_exact_tail_refuses_then_bootstraps_and_resumes_original_i
     )
     assert restored["sources"][0]["text"] == source["first_source"]["text"]
     assert restored["sources"][0]["provenance"] == source["first_source"]["provenance"]
-    assert native._CALLS - first_call == 47
+    assert native._CALLS - first_call == EXACT_TAIL_STARTS
     assert _tree(tmp_path / "source", hashes=True) == original_source_files
     _tree(tmp_path)

@@ -241,6 +241,25 @@ native visibility or resource fit; the integrated fixture must verify this gate.
 
 ### Task 4: Source-view coalescing and grouped owner verification
 
+**Bounded background-step amendment (2026-10-26):** The original all-in-one
+`_layout_fixture_tick` remains a diagnostic with its original absolute5s deadline;
+its large-tail qualification failed and is not accepted by a later retry.
+Add private `_layout_fixture_step` using the existing durable pending-intent
+boundary. A validated fresh append returns `in_progress`, with the original
+source frontier/counters and all publication gates unchanged. It starts no new
+session internally. A later external invocation cold-regenerates the exact same
+pending request and runs actual Existing full-byte proof, grouped owner/LIVE
+proof and atomic ACK inside that invocation's absolute5s deadline. No body,
+partial hash, verified flag or new database field crosses the calls. Lost or
+late fresh replies remain refusals. This deliberately trades one additional
+queue resume/source regeneration per new append for bounded cold-start work.
+Qualify the new background lifecycle separately, retaining every original
+520-chunk geometry, index-refusal, exact-byte and pending-recovery assertion;
+also verify actual unacknowledged owner invisibility. Worker/RSS/frame/heap
+limits remain unchanged. This supersedes the all-in-one timing prerequisite
+for future background construction only; it does not claim old diagnostics
+passed, activate a mover, or complete multi-owner coalescing/capacity work.
+
 **Files:** Modify the existing SQLite/native source codec/runtime/worker/exporter modules, `lance_layout_codec.py`, `lance_layout_directory.py`, `semantic_queue.py`, `semantic_store_worker.py`, `migration_codec.py`, `migration_coordinator.py`, `partitioned_exact_store.py`, `lance_exact_worker.py`, `semantic_runtime.py`; create `tests/test_layout_source_packing.py` and extend `tests/test_layout_coordinator.py`.
 
 **Interfaces:** Extend the Task 3 `layout_source` window to a bounded ordered owner prefix already admitted to one home. Use packing `bulk-v1-ascii-layout-1` in layout envelopes only; original `PACKING` and v1 source behavior remain unchanged. Produce per-owner original phase/key/cursor associations for layout intents; do not infer every owner key from the final cursor. Add `layout_verify_owners(intent_id, version) -> dict` returning bounded ordered manifest hashes, pinned versions and original live receipt proof summaries, checked against the prepared intent; no whole manifests in the response. This supplements, never replaces, the actual identical import replay. The initial single-owner slice still rejects multiple owners; the bounded ordered multi-owner extension remains required later in this task.

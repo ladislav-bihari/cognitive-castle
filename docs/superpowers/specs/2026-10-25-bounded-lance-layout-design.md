@@ -24,6 +24,16 @@ Keep pressure refusal, global admission, preemption and descendant cleanup.
 Do not increase these limits to make qualification pass. These are diagnostic
 profiles; installed production selection and activation remain a later step.
 
+Background-step amendment (2026-10-26): the private background protocol may
+intentionally yield after a fresh append, using the existing durable pending
+intent. This is unverified progress: source frontiers/counters and owner gates
+do not advance. Each externally invoked step has its own absolute5s deadline
+and never creates a session internally. Only a later step's cold source
+regeneration, actual Existing full-byte proof, grouped owner/LIVE proof and
+atomic ACK can complete publication. Nothing persists a body, partial proof or
+verified flag between these invocations. The original all-in-one diagnostic
+retains its stricter same-call contract and its recorded failed qualification.
+
 No generic provider framework, caller-selected budgets or executables, new
 model, serialized SHA state, durable partial-proof protocol, automatic cleanup
 or source deletion belongs to this change.
