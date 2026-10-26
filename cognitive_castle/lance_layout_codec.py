@@ -1065,6 +1065,15 @@ def validate_grouped_owner_proof(value, intent, exported, version):
     return [proof]
 
 
+def validate_attached_layout_intent(value, reg):
+    """Explicit attached domains; the legacy interval validator stays strict."""
+    from .lance_layout_packed import INTENT as PACKED_INTENT, validate_prefix_intent
+
+    if isinstance(value, dict) and value.get("format") == PACKED_INTENT:
+        return validate_prefix_intent(value, reg)
+    return validate_layout_intent(value, reg)
+
+
 def validate_layout_verified(value, intent):
     _fields(
         value,
