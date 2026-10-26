@@ -186,3 +186,22 @@ def test_full_grouped_response_budget_is_checked_including_maximum_scalar_widths
         )
         <= 4096
     )
+
+
+def test_queue_preflight_refuses_an_old_producers_unconfirmable_frozen_prefix(monkeypatch):
+    from cognitive_castle import lance_layout_codec as layout
+    from cognitive_castle.lance_layout_packing import pack_source_prefix
+    from cognitive_castle.lance_layout_packed import prepare_prefix_interval
+
+    reg, before, parts, envelope = live_packet_parts()
+    # Model a previously frozen producer that admitted all four intact originals.
+    # Only fixture construction bypasses the source-side capacity check. The
+    # queue must enforce its own full reply bound before preparing any writes.
+    with monkeypatch.context() as producer:
+        producer.setattr(layout, "_grouped_reply_bound", lambda value: value)
+        packet = pack_source_prefix(reg, before, parts)
+        assert len(packet["components"]) == 4
+        target = layout.target(envelope, 0, [p["plan"] for p in parts])
+        intent = prepare_prefix_interval(reg, packet, target)
+    with pytest.raises(ValueError, match="grouped owner result bound"):
+        layout.prospective_ack(intent)

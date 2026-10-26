@@ -15,6 +15,7 @@ _FIELDS = {
     "queue_layout_rebuild_prepare": ({"partition_id", "version"}, set()),
     "queue_layout_reconcile": ({"page"}, set()),
     "queue_layout_bind": ({"job_id", "plans", "envelope"}, set()),
+    "queue_layout_bind_prefix": ({"job_id", "plans", "envelope"}, set()),
     "queue_layout_prepare": ({"job_id", "expected_cursor", "intent"}, set()),
     "queue_layout_ack": ({"job_id", "intent_id", "verified_summary"}, set()),
     "queue_layout_routes": ({"ids"}, set()),

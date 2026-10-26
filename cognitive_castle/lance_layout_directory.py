@@ -240,6 +240,8 @@ class LayoutDirectory:
             raise _StoreError("unavailable")
         row = SemanticQueue._migration_row(self.conn, job_id)
         state = SemanticQueue._migration_state(row, attachment)
+        if state["pending"] is not None:
+            self._validate_intent(state["pending"], state["registration"])
         if state["registration"]["destination"] != attachment["envelope"]["generation"]["path"]:
             _conflict()
         return state
@@ -459,11 +461,15 @@ class LayoutDirectory:
             raise _StoreError("unavailable")
         return reservation
 
+    @staticmethod
+    def _validate_intent(intent, registration):
+        return codec.validate_layout_intent(intent, registration)
+
     def prepare(self, job_id, expected_cursor, intent):
         migration.bounded(dict(job_id=job_id, expected_cursor=expected_cursor, intent=intent))
         state = self._state(job_id)
         migration.cursor(expected_cursor, state["registration"])
-        codec.validate_layout_intent(intent, state["registration"])
+        self._validate_intent(intent, state["registration"])
         if (
             expected_cursor != state["staging_cursor"]
             or intent["cursor_before"] != expected_cursor
@@ -636,7 +642,7 @@ class LayoutDirectory:
         ):
             _conflict()
         codec.validate_layout_verified(verified_summary, intent)
-        home = self._target(state, intent)
+        self._target(state, intent)
         updates = []
         authorities = {}
         for candidate, observed in zip(intent["routes"], verified_summary["batch"]["routes"]):
@@ -683,8 +689,10 @@ class LayoutDirectory:
                     observed["id"],
                 ),
             )
-        if intent["owners"]:
-            self.conn.execute("UPDATE layout_homes SET published=1 WHERE owner=?", (home[0],))
+        for owner in intent["owners"]:
+            self.conn.execute(
+                "UPDATE layout_homes SET published=1 WHERE owner=?", (owner["owner"],)
+            )
         return SemanticQueue._migration_content_ack(
             self.conn, job_id, state, intent, versions, summary_hash
         )
@@ -1259,9 +1267,12 @@ class _NativeLayoutDirectory(LayoutDirectory):
         )
 
     def resolve(self, ids, *, intent_id=None):
+        from .lance_layout_packed import INTENT as PACKED_INTENT
+
         _ids(ids)
         intent = self.pending(intent_id) if intent_id is not None else None
         gate = intent["routes"][0]["gate"] if intent else None
+        is_packed = intent is not None and intent.get("format") == PACKED_INTENT
         found, absent, unavailable, claims = [], [], [], []
         for identity in ids:
             claim = self._claim(identity)
@@ -1278,7 +1289,6 @@ class _NativeLayoutDirectory(LayoutDirectory):
                 if (
                     intent is not None
                     and claim["intent_id"] == intent_id
-                    and claim["gate"] == gate
                     and candidate is not None
                     and all(claim[k] == candidate[k] for k in codec.CANDIDATE_FIELDS)
                     and claim["partition_id"] == intent["target"]["partition_id"]
@@ -1294,7 +1304,9 @@ class _NativeLayoutDirectory(LayoutDirectory):
                 for k in ("id", "kind", "partition_id", "gate", "version", "receipt", "row_hash")
             ):
                 unavailable.append(identity)
-            elif route["state"] == "published" or intent is not None and route["gate"] == gate:
+            elif route["state"] == "published" or (
+                intent is not None and not is_packed and route["gate"] == gate
+            ):
                 self.partition(route["partition_id"])
                 found.append(route)
             else:
@@ -1554,11 +1566,21 @@ class _NativeLayoutDirectory(LayoutDirectory):
         self.conn.execute("RELEASE castle_prefix_bind")
         return response
 
+    @staticmethod
+    def _validate_intent(intent, registration):
+        return codec.validate_attached_layout_intent(intent, registration)
+
+    def _target(self, state, intent):
+        from .lance_layout_packed import INTENT as PACKED_INTENT
+
+        if intent.get("format") == PACKED_INTENT:
+            return self._prefix_target(state, intent)
+        return super()._target(state, intent)
+
     def _prefix_target(self, state, intent):
         """Validate all original homes and their summed reservation; no writes.
 
-        Kept private until packed prepare, native replay and atomic publication
-        are integrated. A valid packed codec alone never grants queue authority.
+        A valid packed codec alone never grants queue authority.
         """
         from .lance_layout_packed import validate_prefix_intent
 
@@ -1637,8 +1659,11 @@ class _NativeLayoutDirectory(LayoutDirectory):
         return codec.validate_partition_pin(after, self.qualification, self.envelope)
 
     def prepare(self, job_id, expected_cursor, intent):
+        from .lance_layout_packed import INTENT as PACKED_INTENT
+
         state = self._state(job_id)
-        codec.validate_layout_intent(intent, state["registration"])
+        self._validate_intent(intent, state["registration"])
+        is_packed = intent.get("format") == PACKED_INTENT
         migration.bounded({**state, "pending": intent, "native_layout": self.context(job_id)})
         registered = self.partition(intent["target"]["partition_id"])
         if registered["mutation"] is not None:
@@ -1657,8 +1682,30 @@ class _NativeLayoutDirectory(LayoutDirectory):
                 if self._route_row(candidate["id"]) is not None:
                     raise _StoreError("unavailable")
                 new.append(candidate)
-            elif claim["state"] != "confirmed" or self._route_for_id(candidate["id"]) is None:
-                raise _StoreError("unavailable")
+            else:
+                route = (
+                    self._route_for_id(candidate["id"]) if claim["state"] == "confirmed" else None
+                )
+                if route is None:
+                    raise _StoreError("unavailable")
+                if is_packed and (
+                    candidate["kind"] != "bulk_record"
+                    or route["kind"] != "bulk_record"
+                    or route["state"] != "published"
+                    or any(
+                        route[k] != claim[k]
+                        for k in (
+                            "id",
+                            "kind",
+                            "partition_id",
+                            "gate",
+                            "version",
+                            "receipt",
+                            "row_hash",
+                        )
+                    )
+                ):
+                    _conflict()
         if not new or len(new) > self.qualification["reservations"]["append"]["physical_rows"]:
             _conflict()
         pin = registered["pin"]
@@ -1677,6 +1724,10 @@ class _NativeLayoutDirectory(LayoutDirectory):
         )
         migration.bounded(mutation)
         self._expected_pin({**registered, "mutation": mutation})
+        if is_packed:
+            from .lance_layout_packed_rows import owner_spans
+
+            owner_spans(intent, mutation)
         response = super().prepare(job_id, expected_cursor, intent)
         for candidate in new:
             claim = _claim_shape(
@@ -1722,17 +1773,35 @@ class _NativeLayoutDirectory(LayoutDirectory):
         active = self.conn.execute(
             "SELECT partition_id FROM layout_registry WHERE active_owner=? LIMIT 1", (owner,)
         ).fetchone()
-        if active:
-            pin = self._expected_pin(self.partition(active[0]))
-            result.update(next_row=pin["physical_rows"], next_fragment=pin["fragments"])
-        else:
+        if not active:
             home = self.conn.execute(
                 "SELECT partition_id FROM layout_homes WHERE owner=? AND typeof(partition_id)='integer'",
                 (owner,),
             ).fetchone()
             if home is None:
                 raise _StoreError("unavailable")
-            pin = self.partition(home[0])["pin"]
+        registered = self.partition(active[0] if active else home[0])
+        mutation = registered["mutation"]
+        if mutation is not None and mutation["kind"] == "append":
+            from .lance_layout_packed import INTENT as PACKED_INTENT
+            from .lance_layout_packed_rows import owner_spans
+
+            intent = self.pending(mutation["intent_id"])
+            if intent.get("format") == PACKED_INTENT:
+                spans = owner_spans(intent, mutation)
+                if owner in spans:
+                    return spans[owner]
+                published = self.conn.execute(
+                    "SELECT published FROM layout_homes WHERE owner=? AND typeof(published)='integer' AND published IN (0,1)",
+                    (owner,),
+                ).fetchone()
+                if published is None or published[0] != 1:
+                    raise _StoreError("unavailable")
+                # A later append cannot change or hide an already published
+                # owner's original span. Bound it by the registered old pin.
+        pin = self._expected_pin(registered) if active else registered["pin"]
+        if active:
+            result.update(next_row=pin["physical_rows"], next_fragment=pin["fragments"])
         if (
             result["next_row"] < result["first_row"]
             or result["next_fragment"] < result["first_fragment"]
@@ -1808,6 +1877,10 @@ class _NativeLayoutDirectory(LayoutDirectory):
                 _conflict()
         if {v["id"] for v in updates} != set(mutation["new_ids"]):
             _conflict()
+        from .lance_layout_packed import INTENT as PACKED_INTENT
+        from .lance_layout_packed_rows import owner_spans
+
+        spans = owner_spans(intent, mutation) if intent.get("format") == PACKED_INTENT else None
         response = super().ack(job_id, intent_id, verified_summary)
         for claim in updates:
             self.conn.execute(
@@ -1834,10 +1907,23 @@ class _NativeLayoutDirectory(LayoutDirectory):
                 after["partition_id"],
             ),
         )
-        self.conn.execute(
-            "UPDATE layout_spans SET next_row=?,next_fragment=? WHERE owner=?",
-            (after["physical_rows"], after["fragments"], registered["active_owner"]),
-        )
+        if spans is not None:
+            for owner, span in spans.items():
+                self.conn.execute(
+                    "UPDATE layout_spans SET first_row=?,next_row=?,first_fragment=?,next_fragment=? WHERE owner=?",
+                    (
+                        span["first_row"],
+                        span["next_row"],
+                        span["first_fragment"],
+                        span["next_fragment"],
+                        owner,
+                    ),
+                )
+        else:
+            self.conn.execute(
+                "UPDATE layout_spans SET next_row=?,next_fragment=? WHERE owner=?",
+                (after["physical_rows"], after["fragments"], registered["active_owner"]),
+            )
         self._refresh_ready()
         return response
 
