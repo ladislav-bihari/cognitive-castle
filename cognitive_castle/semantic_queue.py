@@ -897,6 +897,17 @@ class SemanticQueue:
             True, lambda conn: _directory(conn).prepare(job_id, expected_cursor, intent)
         )
 
+    def layout_bind_prefix(self, job_id, plans, envelope):
+        from .lance_layout_directory import _directory, _NativeLayoutDirectory
+
+        def bind(conn):
+            directory = _directory(conn)
+            if not isinstance(directory, _NativeLayoutDirectory):
+                raise _StoreError("unavailable")
+            return directory.bind_prefix(job_id, plans, envelope)
+
+        return self._run(True, bind)
+
     def layout_ack(self, job_id, intent_id, verified_summary):
         from .lance_layout_directory import _directory
 
