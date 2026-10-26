@@ -1065,6 +1065,15 @@ def validate_grouped_owner_proof(value, intent, exported, version):
     return [proof]
 
 
+def validate_attached_layout_intent(value, reg):
+    """Explicit attached domains; the legacy interval validator stays strict."""
+    from .lance_layout_packed import INTENT as PACKED_INTENT, validate_prefix_intent
+
+    if isinstance(value, dict) and value.get("format") == PACKED_INTENT:
+        return validate_prefix_intent(value, reg)
+    return validate_layout_intent(value, reg)
+
+
 def validate_layout_verified(value, intent):
     _fields(
         value,
@@ -1144,6 +1153,33 @@ def validate_layout_verified(value, intent):
 def prospective_ack(intent):
     """Reject a prepare whose complete maximum-width success proof cannot fit."""
     version = 2**63 - 1
+    # Capacity only, never an observation or cached proof. Enforce this again
+    # at the queue boundary even if an older producer froze a larger prefix.
+    _grouped_reply_bound(
+        dict(
+            status="ok",
+            format=GROUPED_OWNER_PROOF,
+            intent_hash="f" * 64,
+            owners=[
+                dict(
+                    owner=o["owner"],
+                    manifest_hash=o["manifest_hash"],
+                    partition_id=version,
+                    version=version,
+                    live_receipt_ids=o["live_receipt_ids"],
+                    live=dict(
+                        namespace=o["source_key"][0],
+                        key=o["source_key"][1],
+                        digest="f" * 64,
+                        receipt_hash="f" * 64,
+                    )
+                    if o["classification"] == "live"
+                    else None,
+                )
+                for o in intent["owners"]
+            ],
+        )
+    )
     routes = [
         {
             **r,
