@@ -344,7 +344,11 @@ class LayoutDirectory:
             )
         return response
 
-    def _placement(self, job_id, plans, envelope):
+    def _placement(self, job_id, plans, envelope, *, stop_partition=None):
+        if stop_partition is not None:
+            bulk.integer(stop_partition)
+            if stop_partition >= envelope["max_partitions"]:
+                raise ValueError("prefix placement partition")
         last = self.conn.execute(
             "SELECT partition_id,CASE WHEN length(envelope_hash)=64 THEN envelope_hash ELSE NULL END,CASE WHEN typeof(reservation)='text' AND length(CAST(reservation AS BLOB))<=4096 THEN reservation ELSE NULL END FROM layout_partitions ORDER BY partition_id DESC LIMIT 1"
         ).fetchone()
@@ -378,14 +382,20 @@ class LayoutDirectory:
                 reservation = self._partition(old[2], envelope)
                 if any(reservation[k] < plan["expansion"][k] for k in codec.EXPANSION):
                     raise _StoreError("unavailable")
+                if stop_partition is not None and old[2] != stop_partition:
+                    break
                 targets.append(codec.target(envelope, old[2], [plan]))
                 continue
             if any(plan["expansion"][k] > envelope["limits"][k] for k in codec.EXPANSION):
+                if stop_partition is not None:
+                    break
                 _conflict()
             total = {k: usage[k] + plan["expansion"][k] for k in codec.EXPANSION}
             if any(total[k] > envelope["limits"][k] for k in codec.EXPANSION):
                 partition += 1
                 total = dict(plan["expansion"])
+            if stop_partition is not None and partition != stop_partition:
+                break
             if partition >= envelope["max_partitions"]:
                 _conflict()
             usage = total
