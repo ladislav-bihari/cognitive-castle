@@ -289,3 +289,34 @@ def prepare_prefix_interval(reg, packet, fixed):
     )
     value["routes"] = routes
     return validate_prefix_intent(deepcopy(value), reg)
+
+
+def validate_grouped_owner_proof(value, intent, exported, version):
+    """Validate one actual response for every original owner; no proof rewriting."""
+    layout.positive(version)
+    layout._fields(
+        value, {"status", "format", "intent_hash", "owners"}, "packed grouped owner result"
+    )
+    bulk.sha(value["intent_hash"])
+    if (
+        intent["format"] != INTENT
+        or value["status"] != "ok"
+        or value["format"] != layout.GROUPED_OWNER_PROOF
+        or value["intent_hash"] != migration.hashed(intent)
+        or not 1 <= len(intent["owners"]) <= MAX_OWNERS
+        or not isinstance(value["owners"], list)
+        or not isinstance(exported["finalizations"], list)
+        or len(value["owners"]) != len(intent["owners"])
+        or len(exported["finalizations"]) != len(intent["owners"])
+    ):
+        raise ValueError("packed original owner observations")
+    result = [
+        layout._validate_owner_observation(
+            proof, owner, manifest, intent["target"]["partition_id"], version
+        )
+        for proof, owner, manifest in zip(
+            value["owners"], intent["owners"], exported["finalizations"], strict=True
+        )
+    ]
+    layout._grouped_reply_bound(value)
+    return result
