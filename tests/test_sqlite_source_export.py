@@ -7,6 +7,18 @@ from pathlib import Path
 import sys
 
 
+def proof_live_receipts(store, text, request):
+    proof_receipts = []
+    if request.get("mode") == "proof_budget":
+        for ordinal in range(3):
+            original = store.remember(
+                "aaa-proof-" + str(ordinal), text, {"workspace": "proof Ω", "note": "\0"}
+            )
+            assert original["status"] == "ok" and len(original["ids"]) == 9
+            proof_receipts.append(original)
+    return proof_receipts
+
+
 def fixture_main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from cognitive_castle.memory_worker import _install_guards, _admit_storage, _sqlite_heap_limit
@@ -43,6 +55,7 @@ def fixture_main():
             )
             assert small["status"] == "ok"
             prefix_receipts.append(dict(receipt=small, text=body))
+    proof_receipts = proof_live_receipts(store, text, request)
     facts = dict(archive_id="archive", snapshot_id="original", version=7)
     metadata = (
         ' { "workspace" : "meta", "n" : "\\u0000", "long" : "'
@@ -277,6 +290,11 @@ def fixture_main():
                 original_public=original_public,
                 pending_chunk_id=pending_chunk_id,
                 **({"prefix_receipts": prefix_receipts} if request.get("prefix_small") else {}),
+                **(
+                    {"proof_receipts": proof_receipts}
+                    if request.get("mode") == "proof_budget"
+                    else {}
+                ),
             )
         )
     )
