@@ -1321,16 +1321,74 @@ class _NativeLayoutDirectory(LayoutDirectory):
             )
         )
 
+    def _prefix_homes(self, job_id):
+        from .lance_layout_packing import MAX_OWNERS
+
+        rows = self.conn.execute(
+            "SELECT CASE WHEN typeof(owner)='text' AND length(CAST(owner AS BLOB))=72 THEN owner END,CASE WHEN typeof(partition_id)='integer' THEN partition_id END FROM layout_homes WHERE job_id=? AND published=0 LIMIT 9",
+            (job_id,),
+        ).fetchall()
+        if len(rows) > MAX_OWNERS:
+            raise _StoreError("unavailable")
+        for owner, pid in rows:
+            try:
+                bulk.identity(owner)
+                bulk.integer(pid)
+            except ValueError:
+                raise _StoreError("unavailable") from None
+            if pid >= self.envelope["max_partitions"]:
+                raise _StoreError("unavailable")
+        if len({row[0] for row in rows}) != len(rows) or len({row[1] for row in rows}) > 1:
+            raise _StoreError("unavailable")
+        return [tuple(row) for row in rows]
+
+    def _prefix_anchor(self):
+        rows = self.conn.execute(
+            "SELECT CASE WHEN typeof(active_owner)='text' AND length(CAST(active_owner AS BLOB))=72 THEN active_owner END,partition_id FROM layout_registry WHERE active_owner IS NOT NULL LIMIT 2"
+        ).fetchall()
+        if len(rows) > 1:
+            raise _StoreError("unavailable")
+        for owner, pid in rows:
+            try:
+                bulk.identity(owner)
+                bulk.integer(pid)
+            except ValueError:
+                raise _StoreError("unavailable") from None
+            if pid >= self.envelope["max_partitions"]:
+                raise _StoreError("unavailable")
+        return tuple(rows[0]) if rows else None
+
     def context(self, job_id):
         state = self._state(job_id)
         if state["layout"]["envelope"] != self.envelope:
             raise _StoreError("unavailable")
-        homes = self.conn.execute(
-            "SELECT CASE WHEN typeof(owner)='text' AND length(CAST(owner AS BLOB))=72 THEN owner END,CASE WHEN typeof(partition_id)='integer' THEN partition_id END FROM layout_homes WHERE job_id=? AND published=0 LIMIT 2",
-            (job_id,),
-        ).fetchall()
+        homes = self._prefix_homes(job_id)
         if len(homes) > 1:
-            raise _StoreError("unavailable")
+            from .lance_layout_packed import INTENT, validate_prefix_intent
+
+            anchor = self._prefix_anchor()
+            if anchor is None or anchor[0] not in {r[0] for r in homes} or anchor[1] != homes[0][1]:
+                raise _StoreError("unavailable")
+            pending = state["pending"]
+            target = None
+            if pending is not None:
+                if pending["format"] != INTENT:
+                    raise _StoreError("unavailable")
+                validate_prefix_intent(pending, state["registration"])
+                if {o["owner"] for o in pending["owners"]} != {r[0] for r in homes}:
+                    raise _StoreError("unavailable")
+                target = pending["target"]
+            return migration.bounded(
+                dict(
+                    format="lance-layout-native-context-v2",
+                    generation=self.envelope["generation"],
+                    qualification_hash=self.envelope["qualification_hash"],
+                    epoch=self.epoch,
+                    first_owner=anchor[0],
+                    bound_plans=[self.owner_plan(owner) for owner, _ in sorted(homes)],
+                    target=target,
+                )
+            )
         plan = self.owner_plan(homes[0][0]) if homes else None
         target = codec.target(self.envelope, homes[0][1], [plan]) if homes else None
         return migration.bounded(
@@ -1381,6 +1439,119 @@ class _NativeLayoutDirectory(LayoutDirectory):
             "UPDATE layout_registry SET active_owner=? WHERE partition_id=?", (owner, pid)
         )
         migration.bounded({**self._state(job_id), "native_layout": self.context(job_id)})
+        return response
+
+    def bind_prefix(self, job_id, plans, envelope):
+        from .lance_layout_packing import MAX_OWNERS
+
+        bulk.sha(job_id)
+        if envelope != self.envelope:
+            _conflict()
+        if not isinstance(plans, list) or not 1 <= len(plans) <= MAX_OWNERS:
+            raise ValueError("prefix plan bound")
+        if any(not isinstance(plan, dict) for plan in plans):
+            raise ValueError("prefix original plans")
+        if (
+            len({p["owner"] for p in plans}) != len(plans)
+            or len({p["source_phase"] for p in plans}) != 1
+        ):
+            raise ValueError("prefix original plan order")
+        migration.bounded(dict(job_id=job_id, plans=plans, envelope=envelope))
+        state = self._state(job_id)
+        for plan in plans:
+            codec.validate_owner_plan(plan, state["registration"])
+        if (
+            state["pending"] is not None
+            or state["staging_cursor"]["owner"] is not None
+            or state["state"] == "snapshot_export_exhausted"
+        ):
+            _conflict()
+        if self.attachment(job_id) is None:
+            raise _StoreError("unavailable")
+        homes, anchor = self._prefix_homes(job_id), self._prefix_anchor()
+        old_owners = {r[0] for r in homes}
+        if old_owners != {p["owner"] for p in plans[: len(homes)]}:
+            _conflict()
+        if homes:
+            if anchor is None or anchor != (plans[0]["owner"], homes[0][1]):
+                _conflict()
+        elif anchor is not None:
+            _conflict()
+        self.conn.execute("SAVEPOINT castle_prefix_bind")
+        try:
+            selected, pid = [], None
+            for plan in plans:
+                old = self.conn.execute(
+                    "SELECT published FROM layout_homes WHERE owner=?", (plan["owner"],)
+                ).fetchone()
+                if old is not None and (type(old[0]) is not int or old[0] != 0):
+                    _conflict()
+                if pid is not None:
+                    _, _, proposed = self._placement(job_id, [plan], envelope, stop_partition=pid)
+                    if not proposed:
+                        break
+                self.conn.execute("SAVEPOINT castle_prefix_owner")
+                try:
+                    response = super().bind(job_id, [plan], envelope)
+                    if len(response["targets"]) != 1:
+                        raise _StoreError("unavailable")
+                    target = codec.validate_target(response["targets"][0])
+                    actual = target["partition_id"]
+                    if pid is not None and actual != pid:
+                        self.conn.execute("ROLLBACK TO castle_prefix_owner")
+                        self.conn.execute("RELEASE castle_prefix_owner")
+                        break
+                    registered = self.partition(actual)
+                    if registered["state"] == "sealed" or registered["mutation"] is not None:
+                        _conflict()
+                    pid = actual
+                except Exception:
+                    self.conn.execute("ROLLBACK TO castle_prefix_owner")
+                    self.conn.execute("RELEASE castle_prefix_owner")
+                    raise
+                self.conn.execute("RELEASE castle_prefix_owner")
+                selected.append(plan)
+            if not selected or not old_owners <= {p["owner"] for p in selected}:
+                _conflict()
+            pin = self.partition(pid)["pin"]
+            placeholder = (
+                pin["physical_rows"],
+                pin["physical_rows"],
+                pin["fragments"],
+                pin["fragments"],
+            )
+            for plan in selected:
+                old = self.conn.execute(
+                    "SELECT first_row,next_row,first_fragment,next_fragment FROM layout_spans WHERE owner=?",
+                    (plan["owner"],),
+                ).fetchone()
+                if old is None:
+                    self.conn.execute(
+                        "INSERT INTO layout_spans VALUES (?,?,?,?,?)", (plan["owner"], *placeholder)
+                    )
+                elif tuple(old) != placeholder:
+                    raise _StoreError("unavailable")
+            self.conn.execute(
+                "UPDATE layout_registry SET state='sealed' WHERE partition_id<? AND state='writable'",
+                (pid,),
+            )
+            self.conn.execute(
+                "UPDATE layout_registry SET active_owner=? WHERE partition_id=?",
+                (selected[0]["owner"], pid),
+            )
+            response = migration.bounded(
+                dict(
+                    status="ok",
+                    format="lance-layout-prefix-binding-v1",
+                    target=codec.target(envelope, pid, selected),
+                )
+            )
+            migration.bounded({**self._state(job_id), "native_layout": self.context(job_id)})
+        except Exception:
+            self.conn.execute("ROLLBACK TO castle_prefix_bind")
+            self.conn.execute("RELEASE castle_prefix_bind")
+            raise
+        self.conn.execute("RELEASE castle_prefix_bind")
         return response
 
     def _expected_pin(self, registered):
