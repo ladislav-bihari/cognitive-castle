@@ -28,9 +28,8 @@ def _reader_worker():
         return refused
     from cognitive_castle.native_source_export import Source
     from cognitive_castle.native_export_codec import initial_cursor
-    from cognitive_castle.memory_history import _stage_header, _stage_caller, _chunks
-    from cognitive_castle.fast_memory import MemoryStore
-    from cognitive_castle.canonical_records import CanonicalRecord, _hash, _json
+    from cognitive_castle.memory_history import _stage_header, _stage_caller
+    from cognitive_castle.canonical_records import _json
     import lance
 
     opens = []
@@ -58,21 +57,10 @@ def _reader_worker():
                 source.job,
                 dict(identity=occurrence, metadata_json=metadata, columns_json=columns),
             )
-            text = reader.page(0)
-            assert len(text) == header["text_characters"]
-            assert len(text.encode()) == header["text_bytes"] and _hash(text) == header["text_hash"]
-            records = [
-                CanonicalRecord.from_source(
-                    dict(
-                        id="memory:" + _hash(_json([occurrence, start])),
-                        text=chunk,
-                        provenance=MemoryStore._provenance(
-                            caller, _hash(chunk), start, start + len(chunk)
-                        ),
-                    )
-                ).source()
-                for start, chunk in _chunks(text)
-            ]
+            assert source.raw_before == before and source.following == following
+            assert source.occurrence == occurrence and source.metadata == metadata
+            assert source.columns == columns and source.alias == alias and source.caller == caller
+            records = [record.source() for record in source.records()]
             rows.append(
                 dict(
                     before=before,
@@ -82,14 +70,24 @@ def _reader_worker():
                     metadata=metadata,
                     columns=columns,
                     records=records,
-                    text_hash=_hash(text),
+                    text_hash=header["text_hash"],
                 )
             )
-            next_header = reader.advance()
-            assert reader.dataset is dataset and reader.cursor == following
-        assert next_header is None and len(opens) == 1
+            cursor = dict(cursor, key=[_json(following)])
+            has_next = source.advance(cursor)
+            assert (
+                source.reader is reader and reader.dataset is dataset and reader.cursor == following
+            )
+        assert not has_next and source.header is None and len(opens) == 1
         source.validate_files()
-        return dict(status="ok", rows=rows, native_opens=len(opens), cursor=dict(reader.cursor))
+        return dict(
+            status="ok",
+            rows=rows,
+            native_opens=len(opens),
+            cursor=dict(reader.cursor),
+            projections=source.projections,
+            projected_bytes=source.projected_bytes,
+        )
     finally:
         if source.reader is not None:
             source.reader.close()
@@ -160,5 +158,12 @@ def test_native_prefix_uses_one_view_and_preserves_every_original_row(tmp_path):
     assert result["native_opens"] == 1
     assert result["rows"] == source["rows"] and len(result["rows"]) == 3
     assert result["cursor"] == source["rows"][-1]["following"]
+    assert result["projections"] == sum(
+        (sum(len(record["text"]) for record in row["records"]) + 8191) // 8192
+        for row in source["rows"]
+    )
+    assert result["projected_bytes"] == sum(
+        len(record["text"].encode()) for row in source["rows"] for record in row["records"]
+    )
     assert _tree(tmp_path / "source", hashes=True) == before
     assert native._CALLS - first_call == 2
