@@ -245,6 +245,7 @@ def query_exact(session, directory, text, scope, *, allowed_source_hashes=None):
 
     Uses the caller's existing five-second lease, returns at most eight sources,
     and never treats an unavailable semantic stage as successful lexical recall.
+    ``allowed_source_hashes`` contains full-source exposure hashes, not text hashes.
     """
     from .semantic_queue import validate_scope
 
@@ -271,7 +272,10 @@ def query_exact(session, directory, text, scope, *, allowed_source_hashes=None):
             "profile": PROFILE_ID,
             "generation": None,
             "scope": scope,
-            "allowed_source_hashes": allowed_source_hashes,
+            # Public grants identify the complete original source snapshot,
+            # including provenance; equal text alone never transfers a grant.
+            "allowed_source_hashes": None,
+            "allowed_exposure_hashes": allowed_source_hashes,
             "limit": 8,
         },
     )
@@ -291,6 +295,10 @@ def query_exact(session, directory, text, scope, *, allowed_source_hashes=None):
     if any(
         row["source_hash"] != by_id[row["canonical_id"]]["provenance"]["text_hash"]
         or row["exposure_hash"] != source_exposure_hash(by_id[row["canonical_id"]])
+        or (
+            allowed_source_hashes is not None
+            and source_exposure_hash(by_id[row["canonical_id"]]) not in allowed_source_hashes
+        )
         for row in candidates
     ):
         return {"status": "stale"}
