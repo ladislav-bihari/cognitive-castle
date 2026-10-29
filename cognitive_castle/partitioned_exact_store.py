@@ -638,6 +638,28 @@ class _PartitionStore(OrderedBulkExactStore):
                 raise _StoreError("corrupt")
         return coverage(dataset)
 
+    def _dataset_version(self):
+        mutation = self.registry["mutation"]
+        if (
+            mutation is not None
+            and not self.writable
+            and self.intent_id is None
+            and self.proof_version is None
+            and not self.maintenance
+            and not self.enumerating
+        ):
+            version = self.registry["pin"]["version"]
+            if (
+                mutation["kind"] not in {"append", "maintenance"}
+                or type(version) is not int
+                or not 0 < version < 2**63
+            ):
+                raise _StoreError("unavailable")
+            # A pending mutation never revokes already published words. Open
+            # their registered old snapshot once, retaining all usual checks.
+            return version
+        return None
+
     def _open(self):
         dataset = super()._open()
         self.actual_pin(dataset)
