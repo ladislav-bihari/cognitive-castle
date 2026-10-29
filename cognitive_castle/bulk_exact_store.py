@@ -709,6 +709,11 @@ class OrderedBulkExactStore(BulkExactStore):
         elif row["kind"] != "receipt":
             raise _StoreError("corrupt")
 
+    def _bound_rows(self, rows):
+        """Dedicated stores bind every row to their one qualified owner."""
+        for row in rows:
+            self._bound_row(row)
+
     def _owner_rows(self, dataset, owner, pending):
         from .bulk_owner_stream import _DecodedOwnerRow
 
@@ -808,8 +813,7 @@ class OrderedBulkExactStore(BulkExactStore):
             if self._artifacts[name] + reserve[name] > getattr(q, "max_" + name):
                 raise _StoreError("unavailable")
         try:
-            for row in rows:
-                self._bound_row(row)
+            self._bound_rows(rows)
         except (KeyError, TypeError, ValueError, RecursionError):
             raise _StoreError("corrupt") from None
         # Retain the charge until this exact operation is checked. A lost reply
