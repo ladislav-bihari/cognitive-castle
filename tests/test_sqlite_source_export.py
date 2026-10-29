@@ -19,6 +19,125 @@ def proof_live_receipts(store, text, request):
     return proof_receipts
 
 
+def unwritten_journal_generation(store, directory, transcript, ordinal):
+    from cognitive_castle.memory_capture import queue_source, capture_one
+    from cognitive_castle.fast_memory import MemoryStore
+    from cognitive_castle.canonical_records import _json
+
+    transcript.write_text(
+        _json(
+            dict(
+                type="response_item",
+                payload=dict(
+                    type="message",
+                    role="user",
+                    content=[dict(type="input_text", text=f"unwritten generation {ordinal}")],
+                ),
+            )
+        )
+        + "\n"
+    )
+    key = queue_source(
+        store,
+        transcript,
+        allowed_root=directory.parent,
+        format="codex",
+        workspace="/original-journal",
+    )["source_key"]
+
+    def before_append(*args, **kwargs):
+        raise RuntimeError("fixture dies before append")
+
+    store.remember = before_append
+    try:
+        capture_one(store, key)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("fixture must reach preparation before append")
+    transcript.rename(directory.parent / f"protected-unwritten-{ordinal}.jsonl")
+    return MemoryStore(directory)
+
+
+def capture_journal_fixture(store, directory, fair=False):
+    from cognitive_castle.memory_capture import queue_source, capture_one
+    from cognitive_castle.fast_memory import MemoryStore
+    from cognitive_castle.canonical_records import _json
+
+    transcript = directory.parent / "original-journal-input.jsonl"
+    if fair:
+        for ordinal in range(2):
+            store = unwritten_journal_generation(store, directory, transcript, ordinal)
+    transcript.write_text(
+        _json(
+            dict(
+                type="response_item",
+                payload=dict(
+                    type="message",
+                    role="user",
+                    content=[dict(type="input_text", text="Original journal body Ω\x00\n  ")],
+                ),
+            )
+        )
+        + "\n"
+    )
+    capture_key = queue_source(
+        store,
+        transcript,
+        allowed_root=directory.parent,
+        format="codex",
+        workspace="/original-journal",
+    )["source_key"]
+    remember = store.remember
+
+    def lost_response(*args, **kwargs):
+        assert remember(*args, **kwargs)["status"] == "ok"
+        raise RuntimeError("fixture loses the committed append response")
+
+    store.remember = lost_response
+    try:
+        capture_one(store, capture_key)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("fixture must reach the actual append boundary")
+    store = MemoryStore(directory)
+    if fair:
+        from cognitive_castle.capture_publication import recover_publications
+
+        for _ in range(2):
+            assert recover_publications(store, capture_key)["status"] == "ok"
+        with store._connect() as conn:
+            assert (
+                conn.execute(
+                    "SELECT state FROM capture_publication_intents WHERE source_key=? ORDER BY generation DESC LIMIT 1",
+                    (capture_key,),
+                ).fetchone()[0]
+                == "applied"
+            )
+    for _ in range(2):
+        captured = capture_one(store, capture_key)
+        if captured.get("offset") == transcript.stat().st_size:
+            break
+    assert captured["status"] == "ok" and captured["offset"] == transcript.stat().st_size
+    with store._connect() as conn:
+        journal_row = dict(
+            conn.execute(
+                "SELECT * FROM capture_publication_intents WHERE source_key=? ORDER BY generation DESC LIMIT 1",
+                (capture_key,),
+            ).fetchone()
+        )
+    if fair:
+        with store._connect() as conn:
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM capture_publication_intents WHERE state='pending'"
+                ).fetchone()[0]
+                == 2
+            )
+    return journal_row
+
+
 def fixture_main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from cognitive_castle.memory_worker import _install_guards, _admit_storage, _sqlite_heap_limit
@@ -216,6 +335,11 @@ def fixture_main():
             )
     if request.get("migration_inventory"):
         prune_migration_inventory(store, receipt, expected, request["migration_inventory"])
+    journal_row = (
+        capture_journal_fixture(store, directory, fair=request.get("capture_journal_fair", False))
+        if request.get("capture_journal")
+        else None
+    )
     with store._connect() as conn:
         original_sources = (
             [MemoryStore._source(row) for row in conn.execute("SELECT * FROM chunks ORDER BY id")]
@@ -289,6 +413,7 @@ def fixture_main():
                 original_sources=original_sources,
                 original_public=original_public,
                 pending_chunk_id=pending_chunk_id,
+                **({"journal_row": journal_row} if journal_row is not None else {}),
                 **({"prefix_receipts": prefix_receipts} if request.get("prefix_small") else {}),
                 **(
                     {"proof_receipts": proof_receipts}
