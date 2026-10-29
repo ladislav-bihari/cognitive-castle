@@ -175,11 +175,17 @@ def _observation(
     return value
 
 
-def _publish_piece(store, request, piece, provenance, on_published):
+def _publish_piece(store, request, piece, provenance, on_published, on_prepared):
+    prepared = prepare_remember(request, piece, provenance, namespace="transcript")
+    if on_prepared is not None:
+        reserved = on_prepared(prepared)
+        if not isinstance(reserved, dict):
+            return dict(status="unavailable")
+        if reserved.get("status") != "ok":
+            return reserved
     receipt = store.remember(request, piece, provenance, namespace="transcript")
     if receipt.get("status") != "ok":
         return receipt
-    prepared = prepare_remember(request, piece, provenance, namespace="transcript")
     try:
         validate_remember_receipt(prepared, receipt)
     except ValueError:
@@ -197,16 +203,28 @@ def _publish_piece(store, request, piece, provenance, on_published):
         return dict(status="unavailable", reason="publication_receipt")
 
 
-def ingest_slice(store, path: Path, *, allowed_root: Path, format: str, on_published=None) -> dict:
+def ingest_slice(
+    store,
+    path: Path,
+    *,
+    allowed_root: Path,
+    format: str,
+    on_published=None,
+    on_prepared=None,
+) -> dict:
     """Ingest a bounded slice under a caller-selected trusted registered root.
 
     Small anchors cannot prove unchanged historical prefixes. Continuations retain
     only hashes/positions, never transcript text; source files remain untouched.
     An optional trusted observer receives the prepared request and verified
     receipt before the piece checkpoint. A refusal leaves that piece replayable.
+    A trusted preparation observer can reserve body-free intent before append.
     """
     if format not in ("codex", "claude") or (
-        on_published is not None and not callable(on_published)
+        any(
+            observer is not None and not callable(observer)
+            for observer in (on_published, on_prepared)
+        )
     ):
         raise ValueError("unsupported transcript format or invalid publication observer")
     deadline = time.monotonic() + 0.250
@@ -394,7 +412,7 @@ def ingest_slice(store, path: Path, *, allowed_root: Path, format: str, on_publi
                                 f"{key}:{generation}:{start}:{record_hash}:{block['block']}:{piece_start}".encode()
                             )
                             receipt = _publish_piece(
-                                store, request, piece, provenance, on_published
+                                store, request, piece, provenance, on_published, on_prepared
                             )
                             if receipt.get("status") != "ok":
                                 outcome = receipt.get("status")
