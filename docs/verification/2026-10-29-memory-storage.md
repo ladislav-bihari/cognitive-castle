@@ -64,11 +64,13 @@ test runner. No production guard was weakened to make that suite pass.
 
 ## Production and completion gates
 
-The successful native runs used the **diagnostic**, not the existing production,
-exact-memory resource profile. Observed exact worker peaks were approximately
-135–138 MiB, above the existing 128 MiB production task limit. The operator has
-been asked whether to retain that limit and optimize further or approve the
-192/256 MiB bounded profile for production. No production limit has been changed.
+The successful native runs used the 192/256 MiB exact-memory profile. Observed
+exact worker peaks were approximately 135–138 MiB. On 29 October 2026 the user
+explicitly approved that profile for production: “povolit produkčně 192/256 MiB”.
+The exact guardian/session already enforce these values. SQLite coordination
+retains 128/192 MiB, and deadlines/admission/cleanup remain unchanged. This
+approval resolves the resource-policy gate; integration and verified activation
+are still required before changing the installed ordinary routes.
 
 The actual-SQL fault case used genuine Lance replay/group proofs. After the
 second owner span update, the injected failure rolled back all 14 coordination

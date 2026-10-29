@@ -227,12 +227,13 @@ def _schema():
 
 
 class LanceVectorStore:
-    def __init__(self, directory: Path, *, writable=False):
-        if type(writable) is not bool:
-            raise ValueError("writable")
+    def __init__(self, directory: Path, *, writable=False, exact_layout=False):
+        if type(writable) is not bool or type(exact_layout) is not bool:
+            raise ValueError("writable or exact layout")
         self.generation = Path(directory).absolute()
         self.directory = self.generation / "vectors"
         self.writable = writable
+        self.exact_layout = exact_layout
 
     def _generation_paths(self):
         _require_supervision()
@@ -326,11 +327,17 @@ class LanceVectorStore:
         return rows[0] if rows else None
 
     def _sources(self, references, expected_binding):
-        from .unified_memory import _exposure
+        from .semantic_intents import source_exposure_hash
 
-        result = LanceExactStore(self.generation / "exact").read_sources(
-            [reference["canonical_id"] for reference in references]
-        )
+        ids = [reference["canonical_id"] for reference in references]
+        if self.exact_layout:
+            from .partitioned_exact_store import PartitionedExactStore
+
+            result = PartitionedExactStore(self.generation).layout_read(
+                "read_sources", {"ids": ids}
+            )
+        else:
+            result = LanceExactStore(self.generation / "exact").read_sources(ids)
         if result["status"] != "ok":
             raise _StoreError(
                 "stale"
@@ -342,7 +349,7 @@ class LanceVectorStore:
             if (
                 source["id"] != reference["canonical_id"]
                 or source["provenance"]["text_hash"] != reference["source_hash"]
-                or _exposure(source) != reference["exposure_hash"]
+                or source_exposure_hash(source) != reference["exposure_hash"]
             ):
                 raise _StoreError("stale")
             envelopes.append({"source": source, "expected_hash": reference["source_hash"]})
