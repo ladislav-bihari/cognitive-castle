@@ -36,7 +36,7 @@ _FIELDS = {
     "vector_receipt": ({"batch_key", "start_window"}, set()),
     "vector_nearest": (
         {"vector", "profile", "generation", "scope", "allowed_source_hashes", "limit"},
-        set(),
+        {"allowed_exposure_hashes"},
     ),
 }
 QUEUE_READS = {"status", "migration_state", "layout_routes"}

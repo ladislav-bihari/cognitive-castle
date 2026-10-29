@@ -575,7 +575,18 @@ class LanceVectorStore:
         except (OSError, RuntimeError):
             return {"status": "unavailable"}
 
-    def nearest(self, vector, profile, generation, scope, allowed_source_hashes, limit):
+    def nearest(
+        self,
+        vector,
+        profile,
+        generation,
+        scope,
+        allowed_source_hashes,
+        limit,
+        *,
+        allowed_exposure_hashes=None,
+    ):
+        """Restrict text hashes and full-source exposure grants independently."""
         vector, _ = _float32(vector)
         validate_scope(scope)
         if (
@@ -585,10 +596,12 @@ class LanceVectorStore:
             or not 1 <= limit <= 100
         ):
             raise ValueError("query profile generation or limit")
-        if allowed_source_hashes is not None:
-            if not isinstance(allowed_source_hashes, list) or len(allowed_source_hashes) > 256:
+        for grants in (allowed_source_hashes, allowed_exposure_hashes):
+            if grants is None:
+                continue
+            if not isinstance(grants, list) or len(grants) > 256:
                 raise ValueError("grants")
-            for value in allowed_source_hashes:
+            for value in grants:
                 validate_hash(value)
         try:
             self._paths()
@@ -597,7 +610,7 @@ class LanceVectorStore:
                 raise _StoreError("not_initialized")
             if generation is not None and dataset.version != generation:
                 return {"status": "stale"}
-            if allowed_source_hashes == []:
+            if allowed_source_hashes == [] or allowed_exposure_hashes == []:
                 return {
                     "status": "ok",
                     "profile": PROFILE_ID,
@@ -615,6 +628,8 @@ class LanceVectorStore:
                 predicate = predicate & (pc.field(name) == scope[name])
             if allowed_source_hashes is not None:
                 predicate = predicate & pc.field("source_hash").isin(allowed_source_hashes)
+            if allowed_exposure_hashes is not None:
+                predicate = predicate & pc.field("exposure_hash").isin(allowed_exposure_hashes)
             rows = (
                 self._scanner(
                     dataset,
@@ -642,6 +657,10 @@ class LanceVectorStore:
                     or (
                         allowed_source_hashes is not None
                         and compact["source_hash"] not in allowed_source_hashes
+                    )
+                    or (
+                        allowed_exposure_hashes is not None
+                        and compact["exposure_hash"] not in allowed_exposure_hashes
                     )
                 ):
                     raise _StoreError("corrupt")
