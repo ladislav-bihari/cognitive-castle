@@ -64,6 +64,10 @@ TABLES = {
         "source_key generation",
     ),
     "capture_sources": ("source_key state value", "source_key"),
+    "capture_publication_intents": (
+        "request_key source_key generation binding value state",
+        "request_key",
+    ),
     "checkpoints": ("source_key value", "source_key"),
     "coverage_observations": ("sequence identity value", "sequence"),
 }

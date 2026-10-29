@@ -292,6 +292,63 @@ class MemoryStore:
         except (OSError, sqlite3.Error, _Unavailable, _Quota, _Corrupt) as exc:
             return self._error(exc)
 
+    def receipt(self, namespace, key):
+        """Read a committed request receipt and verify its bounded originals.
+
+        Uses this explicitly selected backend only. A journal's expected IDs
+        are never substituted for a missing or damaged canonical receipt.
+        """
+        _string(namespace, 128, "namespace")
+        _string(key, 128, "request_id")
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT CAST(substr(CAST(digest AS BLOB),1,65) AS TEXT) AS digest,CAST(substr(CAST(ids AS BLOB),1,1025) AS TEXT) AS ids "
+                    "FROM receipts WHERE namespace=? AND request_id=?",
+                    (namespace, key),
+                ).fetchone()
+                if row is None:
+                    return dict(status="not_found")
+                return self._checked_receipt(conn, namespace, key, row)
+        except _Missing:
+            return dict(status="not_found")
+        except (OSError, sqlite3.Error, _Unavailable, _Quota, _Corrupt) as exc:
+            return self._error(exc)
+
+    def _checked_receipt(self, conn, namespace, key, row):
+        from .canonical_records import prepare_remember
+
+        try:
+            ids = json.loads(_string(row["ids"], 1024, "receipt identities"))
+            if not isinstance(ids, list) or not 1 <= len(ids) <= 9:
+                raise ValueError("receipt identities")
+            sources = []
+            for identity in ids:
+                if not isinstance(identity, str) or not re.fullmatch(
+                    r"memory:[a-f0-9]{64}", identity
+                ):
+                    raise ValueError("receipt identity")
+                original = conn.execute(
+                    "SELECT id,CAST(substr(CAST(text AS BLOB),1,8193) AS TEXT) AS text,CAST(substr(CAST(provenance AS BLOB),1,513) AS TEXT) AS provenance,"
+                    "CAST(substr(CAST(text_hash AS BLOB),1,65) AS TEXT) AS text_hash,start,end FROM chunks WHERE id=?",
+                    (identity,),
+                ).fetchone()
+                if original is None:
+                    raise _Corrupt("missing receipt original")
+                sources.append(self._source(original))
+            caller = sources[0]["provenance"]["caller"]
+            prepared = prepare_remember(
+                key, "".join(s["text"] for s in sources), caller, namespace=namespace
+            )
+            if (
+                prepared.digest != row["digest"]
+                or [record.source() for record in prepared.records] != sources
+            ):
+                raise ValueError("receipt original binding")
+            return dict(status="ok", digest=prepared.digest, receipt=prepared.receipt)
+        except (ValueError, KeyError, TypeError, RecursionError) as exc:
+            raise _Corrupt("invalid committed receipt") from exc
+
     @staticmethod
     def _provenance(caller, text_hash, start, end):
         provenance = {

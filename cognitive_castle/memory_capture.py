@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from pathlib import Path
 import sqlite3
 import time
@@ -30,6 +31,9 @@ def source_key(path, format):
 
 
 def _ensure(conn):
+    from .capture_publication import ensure_journal
+
+    ensure_journal(conn)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS capture_sources (source_key TEXT PRIMARY KEY, state TEXT NOT NULL, value TEXT NOT NULL)"
     )
@@ -138,8 +142,8 @@ _CHUNK_GENERATION = (
 )
 
 
-def _scope_chunks(conn, key, checkpoint, attempt):
-    """Bind only this durable attempt's new chunks; previous mappings never move."""
+def _generation_scope(conn, key, checkpoint, attempt):
+    """Reserve immutable generation attribution; never reassign an old scope."""
     generation = checkpoint["generation"]
     metadata_start = checkpoint.get("workspace_first_offset")
     metadata = checkpoint.get("workspace") if metadata_start is not None else None
@@ -175,8 +179,24 @@ def _scope_chunks(conn, key, checkpoint, attempt):
         "attribution=excluded.attribution,state=excluded.state",
         (key, generation, workspace, attribution, state),
     )
+    return dict(
+        workspace=workspace,
+        attribution=attribution,
+        state=state,
+        can_map=bool(workspace and not prior_conflict and not changed_scope),
+        metadata_start=metadata_start,
+        conflict_at=checkpoint.get("workspace_conflict_at"),
+    )
+
+
+def _scope_chunks(conn, key, checkpoint, attempt):
+    """Summarize scope; only explicit legacy attempts use their old watermark."""
+    generation = checkpoint["generation"]
+    scope = _generation_scope(conn, key, checkpoint, attempt)
+    workspace, attribution, state = scope["workspace"], scope["attribution"], scope["state"]
+    metadata_start = scope["metadata_start"]
     where = " WHERE " + _CHUNK_SOURCE + "=? AND " + _CHUNK_GENERATION + "=?"
-    if workspace and not prior_conflict and not changed_scope:
+    if "after_rowid" in attempt and scope["can_map"]:
         extra = " AND rowid>?"
         parameters = [
             workspace,
@@ -221,7 +241,7 @@ def _scope_chunks(conn, key, checkpoint, attempt):
 
 
 def _prepare_scope(store, key, checkpoint):
-    """Persist a mapping watermark before ingest, replaying interrupted attempts first."""
+    """Recover old mapping attempts, then reserve an explicit-ID capture attempt."""
     with store._connect(True) as conn:
         _ensure(conn)
         source = _decode(
@@ -235,7 +255,8 @@ def _prepare_scope(store, key, checkpoint):
             source["generation"] = checkpoint["generation"]
         source["workspace_scope"] = "pending"
         source["scope_attempt"] = dict(
-            after_rowid=conn.execute("SELECT COALESCE(MAX(rowid),0) FROM chunks").fetchone()[0],
+            format="canonical-receipt-v1",
+            token=secrets.token_hex(16),
             hint=source.get("host_workspace_hint"),
             hint_observation=source.get("host_workspace_observation"),
         )
@@ -257,13 +278,21 @@ def capture_one(store, key):
             if row is None:
                 return {"status": "not_found"}
             source = _decode(row)
+        from .capture_publication import CapturePublication, recover_publications
+
+        recovered = recover_publications(store, key)
+        if recovered["status"] != "ok":
+            return recovered
         source = _prepare_scope(store, key, store.load_checkpoint(key))
+        publication = CapturePublication(store, key, source["scope_attempt"])
         try:
             result = ingest_slice(
                 store,
                 Path(source["path"]),
                 allowed_root=Path(source["root"]),
                 format=source["format"],
+                on_prepared=publication.prepare,
+                on_published=publication.confirm,
             )
         except (ValueError, OSError):
             result = {"status": "unavailable", "reason": "source_unavailable"}
@@ -302,6 +331,10 @@ def capture_one(store, key):
                     )
                 current.update(_scope_chunks(conn, key, checkpoint, source["scope_attempt"]))
                 current.pop("scope_attempt", None)
+                current["publication_pending"] = publication.pending(conn)
+                result["publication_pending"] = current["publication_pending"]
+                if current["publication_pending"]:
+                    current["state"] = "pending"
             else:
                 current.update(state="failed", last_error=result.get("reason", result["status"]))
             _write(conn, current)
@@ -320,7 +353,16 @@ def source_page(store, *, after="", limit=8, pending_only=False):
         with store._connect() as conn:
             if not _exists(conn):
                 return {"status": "ok", "sources": [], "next_after": None}
+            from .capture_publication import pending_publications
+
             where = " AND state IN ('pending','failed')" if pending_only else ""
+            if (
+                pending_only
+                and conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='capture_publication_intents'"
+                ).fetchone()
+            ):
+                where = " AND (state IN ('pending','failed') OR EXISTS (SELECT 1 FROM capture_publication_intents p WHERE p.source_key=capture_sources.source_key AND p.state IS NOT 'applied'))"
             rows = conn.execute(
                 f"SELECT source_key,state,substr(value,1,16385) AS value FROM capture_sources WHERE source_key>?{where} ORDER BY source_key LIMIT ?",
                 (after, limit + 1),
@@ -328,6 +370,9 @@ def source_page(store, *, after="", limit=8, pending_only=False):
             sources = []
             for row in rows[:limit]:
                 value = _decode(row)
+                value["publication_pending"] = pending_publications(conn, value["source_key"])
+                if value["publication_pending"] and value["state"] == "caught_up":
+                    value["state"] = "pending"
                 if len(_json(sources + [value]).encode()) > 12000:
                     if not sources:
                         return {"status": "unavailable", "reason": "source_page_limit"}
@@ -351,6 +396,7 @@ def coverage(store):
         observed_sources=0,
         pending_sources=0,
         failed_sources=0,
+        publication_pending=0,
         observed_bytes=0,
         processed_bytes=0,
         pending_bytes=0,
@@ -394,12 +440,16 @@ def coverage(store):
             ).fetchone()
             for key in result.keys() & row.keys():
                 result[key] = row[key]
+            from .capture_publication import pending_publications
+
+            result["publication_pending"] = pending_publications(conn)
             result["omitted"] = {key: row[key] for key in OMISSIONS}
             result["excluded"] = {key: row[key] for key in EXCLUSIONS}
             if result["observed_sources"]:
                 result["coverage"] = (
                     "partial"
                     if result["pending_sources"]
+                    or result["publication_pending"]
                     or result["failed_sources"]
                     or result["accounting_incomplete_sources"]
                     else "gaps"
