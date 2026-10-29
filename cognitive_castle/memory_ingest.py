@@ -9,6 +9,8 @@ from pathlib import Path
 import stat
 import time
 
+from .canonical_records import prepare_remember, validate_remember_receipt
+
 from .memory_accounting import (
     add_counts,
     classify_record,
@@ -173,14 +175,40 @@ def _observation(
     return value
 
 
-def ingest_slice(store, path: Path, *, allowed_root: Path, format: str) -> dict:
+def _publish_piece(store, request, piece, provenance, on_published):
+    receipt = store.remember(request, piece, provenance, namespace="transcript")
+    if receipt.get("status") != "ok":
+        return receipt
+    prepared = prepare_remember(request, piece, provenance, namespace="transcript")
+    try:
+        validate_remember_receipt(prepared, receipt)
+    except ValueError:
+        return dict(status="unavailable", reason="publication_receipt")
+    if on_published is None:
+        return receipt
+    observed = on_published(prepared, receipt)
+    if not isinstance(observed, dict):
+        return dict(status="unavailable")
+    if observed.get("status") != "ok":
+        return observed
+    try:
+        return validate_remember_receipt(prepared, receipt)
+    except ValueError:
+        return dict(status="unavailable", reason="publication_receipt")
+
+
+def ingest_slice(store, path: Path, *, allowed_root: Path, format: str, on_published=None) -> dict:
     """Ingest a bounded slice under a caller-selected trusted registered root.
 
     Small anchors cannot prove unchanged historical prefixes. Continuations retain
     only hashes/positions, never transcript text; source files remain untouched.
+    An optional trusted observer receives the prepared request and verified
+    receipt before the piece checkpoint. A refusal leaves that piece replayable.
     """
-    if format not in ("codex", "claude"):
-        raise ValueError("unsupported transcript format")
+    if format not in ("codex", "claude") or (
+        on_published is not None and not callable(on_published)
+    ):
+        raise ValueError("unsupported transcript format or invalid publication observer")
     deadline = time.monotonic() + 0.250
     opened, info, path = _open_source(path, allowed_root)
     with opened:
@@ -365,8 +393,8 @@ def ingest_slice(store, path: Path, *, allowed_root: Path, format: str) -> dict:
                             request = _hash(
                                 f"{key}:{generation}:{start}:{record_hash}:{block['block']}:{piece_start}".encode()
                             )
-                            receipt = store.remember(
-                                request, piece, provenance, namespace="transcript"
+                            receipt = _publish_piece(
+                                store, request, piece, provenance, on_published
                             )
                             if receipt.get("status") != "ok":
                                 outcome = receipt.get("status")

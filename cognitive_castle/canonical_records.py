@@ -116,6 +116,24 @@ class PreparedRemember:
         }
 
 
+def validate_remember_receipt(prepared: PreparedRemember, receipt: dict) -> dict:
+    """Check an actual publication receipt before advancing a source checkpoint.
+
+    This verifies the response contract, not durability by itself: the trusted
+    storage publisher remains responsible for confirming the actual append.
+    """
+    if (
+        not isinstance(prepared, PreparedRemember)
+        or not isinstance(receipt, dict)
+        or receipt.keys() != {"status", "ids", "stored_text_bytes", "text_sha256"}
+        or type(receipt["stored_text_bytes"]) is not int
+        or not isinstance(receipt["ids"], list)
+        or receipt != prepared.receipt
+    ):
+        raise ValueError("publication receipt mismatch")
+    return receipt
+
+
 def prepare_remember(
     request_id: str,
     text: str,
