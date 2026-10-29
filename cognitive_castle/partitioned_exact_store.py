@@ -954,6 +954,27 @@ class _PartitionStore(OrderedBulkExactStore):
                     ids.add(row["id"])
         return len(ids), marker
 
+    def _bound_rows(self, rows):
+        intent = self.authority.pending(self.intent_id)
+        if intent.get("format") != packed.INTENT:
+            return super()._bound_rows(rows)
+        from .lance_layout_packed_rows import ordered_rows
+
+        # The dedicated base guard has one owner; this registered mutation has
+        # an exact, complete owner set. Validate every original row against that
+        # authority, including the global receipt whose hash is not known yet.
+        if ordered_rows(intent, self.registry["mutation"], rows) != rows:
+            raise _StoreError("corrupt")
+        for row in rows:
+            _DecodedOwnerRow(row)
+        receipt = decode_receipt(rows[-1])
+        if (
+            receipt["source_binding"] != intent["source_binding"]
+            or receipt["batch_id"] != intent["intent_id"]
+            or self._compact(receipt, rows[-1]["id"]) != layout.expected_receipt(intent)
+        ):
+            raise _StoreError("corrupt")
+
     def _before_append(self, dataset, rows):
         self.release_remote()
         mutation = self.registry["mutation"]
