@@ -115,19 +115,26 @@ class LanceExactStore:
         if any(path.name not in {DATASET, ".write.lock"} for path in self.directory.iterdir()):
             raise _StoreError("unavailable")
 
+    def _dataset_version(self):
+        """Latest by default; qualified subclasses may bind an exact snapshot."""
+        return None
+
     def _open(self):
         self._check_namespace_access()
+        version = self._dataset_version()
         import lance
 
         path = self.directory / DATASET
         if not path.exists():
             return None
-        dataset = lance.dataset(
-            str(path),
+        parameters = dict(
             metadata_cache_size_bytes=1024**2,
             index_cache_size_bytes=1024**2,
             read_params={"cache_repetition_index": False, "validate_on_decode": True},
         )
+        if version is not None:
+            parameters["version"] = version
+        dataset = lance.dataset(str(path), **parameters)
         if not dataset.schema.equals(_schema(), check_metadata=True):
             raise _StoreError("corrupt")
         return dataset
