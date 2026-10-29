@@ -33,7 +33,9 @@ _FIELDS = {
     "queue_status": (set(), set()),
     "queue_retry": ({"batch_key"}, {"refused"}),
     "vector_publish": ({"batch_key", "references", "page", "inference"}, set()),
+    "vector_layout_publish": ({"batch_key", "references", "page", "inference"}, set()),
     "vector_receipt": ({"batch_key", "start_window"}, set()),
+    "vector_layout_receipt": ({"batch_key", "start_window"}, set()),
     "vector_nearest": (
         {"vector", "profile", "generation", "scope", "allowed_source_hashes", "limit"},
         {"allowed_exposure_hashes"},
@@ -151,7 +153,13 @@ def _execute(request):
     else:
         from cognitive_castle.lance_vector_store import LanceVectorStore
 
-        store = LanceVectorStore(Path(request["directory"]), writable=method == "publish")
+        if method in {"layout_publish", "layout_receipt"}:
+            method = method.removeprefix("layout_")
+            store = LanceVectorStore(
+                Path(request["directory"]), writable=method == "publish", exact_layout=True
+            )
+        else:
+            store = LanceVectorStore(Path(request["directory"]), writable=method == "publish")
     return getattr(store, method)(**arguments)
 
 

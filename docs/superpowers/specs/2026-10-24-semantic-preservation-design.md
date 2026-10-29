@@ -131,18 +131,23 @@ dimension matching is not grounds for blindly reusing incompatible vectors.
 ## Resource qualification before selecting production behavior
 
 Keep current capture/read guards, pressure refusal, single-flight admission and
-original backups. Do not raise limits to force a passing result. The existing
-ordinary exact/capture worker ceilings are 128 MiB task / 192 MiB parent plus
-task; native history qualification uses 512 MiB / 640 MiB. These are not evidence
-that semantic queries fit the exact-read ceilings.
+original backups. Do not raise limits to force a passing result. On 29 October
+2026 the user explicitly approved **192 MiB task / 256 MiB parent plus task**
+for the new production Lance exact-memory worker: “povolit produkčně 192/256 MiB”.
+The existing SQLite capture/coordination workers retain 128 MiB / 192 MiB;
+native history qualification retains 512 MiB / 640 MiB. These separate profiles
+are not evidence that semantic queries fit the exact-read ceilings.
 
 The user approved a separate 512 MiB task / 640 MiB parent plus task envelope
 for the prepared offline semantic diagnostic, with a five-second total deadline.
 Its workers run sequentially on CPU, with no permanently resident model and the
 existing pressure refusal. This approval does not select a new production
-resource profile. The existing exact/capture ceilings remain unchanged. If
-option B cannot meet those exact-read ceilings, that is a failed
-qualification requiring a revised approved design, not permission to raise them.
+resource profile. The Lance exact-memory production profile is approved above;
+this does not activate the replacement or change its two-second reads,
+three-second writes, pressure refusal or single-flight admission. Operations
+remain short-lived and sequential. A refusal under an approved profile does not
+authorize a larger retry. Capture/checkpoint ordering and the separate SQLite
+worker limits remain unchanged.
 
 The proposed ordinary semantic deadline is five seconds end to end, including
 model startup, candidate collection, optional configured ranking stages and exact

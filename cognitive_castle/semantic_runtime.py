@@ -323,6 +323,7 @@ class SemanticSession:
             "queue_migration_state",
             "queue_layout_routes",
             "vector_receipt",
+            "vector_layout_receipt",
             "vector_nearest",
         }
         return self._run_stage(
@@ -340,3 +341,38 @@ class SemanticSession:
             rss=(128 if queue else 192) * 1024**2,
             total=(192 if queue else 256) * 1024**2,
         )
+
+
+class LayoutSemanticSession(SemanticSession):
+    """Trusted registered-generation adapter for the existing semantic driver.
+
+    Exact hydration never falls back to the flat store. Selecting this internal
+    session does not register, migrate or activate a production generation.
+    """
+
+    def __init__(self, trusted_profile: Path, generation: Path, *, interactive=True):
+        self.generation = Path(generation)
+        if not self.generation.is_absolute() or ".." in self.generation.parts:
+            raise ValueError("registered semantic generation")
+        super().__init__(trusted_profile, interactive=interactive)
+
+    def _directory(self, directory, expected):
+        value = Path(directory)
+        if not value.is_absolute() or ".." in value.parts or value != expected:
+            raise ValueError("registered semantic directory")
+
+    def exact(self, directory, operation, arguments):
+        self._directory(directory, self.generation / "exact")
+        if operation not in {"read_sources", "receipt", "page"}:
+            raise ValueError("registered exact read operation")
+        return super().exact(
+            self.generation,
+            "layout_read",
+            dict(operation=operation, arguments=arguments),
+        )
+
+    def store(self, directory, operation, arguments):
+        self._directory(directory, self.generation)
+        if operation in {"vector_publish", "vector_receipt"}:
+            operation = operation.replace("vector_", "vector_layout_", 1)
+        return super().store(directory, operation, arguments)
