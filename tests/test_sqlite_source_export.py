@@ -19,6 +19,45 @@ def proof_live_receipts(store, text, request):
     return proof_receipts
 
 
+def capture_journal_fixture(store, directory):
+    from cognitive_castle.memory_capture import queue_source, capture_one
+    from cognitive_castle.canonical_records import _json
+
+    transcript = directory.parent / "original-journal-input.jsonl"
+    transcript.write_text(
+        _json(
+            dict(
+                type="response_item",
+                payload=dict(
+                    type="message",
+                    role="user",
+                    content=[dict(type="input_text", text="Original journal body Ω\n  ")],
+                ),
+            )
+        )
+        + "\n"
+    )
+    capture_key = queue_source(
+        store,
+        transcript,
+        allowed_root=directory.parent,
+        format="codex",
+        workspace="/original-journal",
+    )["source_key"]
+    for _ in range(2):
+        captured = capture_one(store, capture_key)
+        if captured.get("offset") == transcript.stat().st_size:
+            break
+    assert captured["status"] == "ok" and captured["offset"] == transcript.stat().st_size
+    with store._connect() as conn:
+        journal_row = dict(
+            conn.execute(
+                "SELECT * FROM capture_publication_intents WHERE source_key=?", (capture_key,)
+            ).fetchone()
+        )
+    return journal_row
+
+
 def fixture_main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from cognitive_castle.memory_worker import _install_guards, _admit_storage, _sqlite_heap_limit
@@ -216,6 +255,9 @@ def fixture_main():
             )
     if request.get("migration_inventory"):
         prune_migration_inventory(store, receipt, expected, request["migration_inventory"])
+    journal_row = (
+        capture_journal_fixture(store, directory) if request.get("capture_journal") else None
+    )
     with store._connect() as conn:
         original_sources = (
             [MemoryStore._source(row) for row in conn.execute("SELECT * FROM chunks ORDER BY id")]
@@ -289,6 +331,7 @@ def fixture_main():
                 original_sources=original_sources,
                 original_public=original_public,
                 pending_chunk_id=pending_chunk_id,
+                **({"journal_row": journal_row} if journal_row is not None else {}),
                 **({"prefix_receipts": prefix_receipts} if request.get("prefix_small") else {}),
                 **(
                     {"proof_receipts": proof_receipts}
