@@ -62,11 +62,11 @@ def test_late_normal_keeps_false_and_records_exact_single_probe():
 
 
 def test_non_normal_guardian_keeps_half_second_timeout():
-    ns, _, calls = guardian(b"2\n", 0.006)
+    ns, _, calls = guardian(b"4\n", 0.006)
     detail = {"site": "guardian_initial"}
     assert ns["_pressure_ok"](diagnostic=detail) is False
     assert len(calls) == 1 and calls[0][1]["timeout"] == 0.5
-    assert detail["outcome"] == "non_normal" and detail["pressure"] == 2
+    assert detail["outcome"] == "non_normal" and detail["pressure"] == 4
     assert detail["remaining_us"] == -1 and detail["timeout_us"] == 500000
 
 
@@ -174,7 +174,7 @@ def nested(file, parent, name, ns):
 
 
 def test_guardian_host_coordinator_preserve_only_valid_pressure_metadata():
-    ns, _, _ = guardian(b"2", 0.001)
+    ns, _, _ = guardian(b"4", 0.001)
     runtime_probe(ns)
     detail = {"site": "guardian_initial"}
     ns["_pressure_ok"](diagnostic=detail)
@@ -222,3 +222,8 @@ if __name__ == "__main__":
     for test in tests:
         test()
     print(json.dumps({"passed": len(tests), "actual_probe_runtime_engine_DB_access": False}))
+
+
+def test_warning_pressure_is_admitted():
+    ns, _, _ = guardian(b"2\n", 0.001)
+    assert ns["_pressure_ok"](diagnostic={"site": "guardian_initial"}) is True

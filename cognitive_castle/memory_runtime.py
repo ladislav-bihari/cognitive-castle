@@ -416,7 +416,7 @@ def _background_pressure_refusal(until, diagnostic, site, sample_resources=None)
             status = child.poll()
             if output_done and status is not None:
                 value = bytes(output).strip()
-                normal = status == 0 and value == b"1"
+                normal = status == 0 and value in (b"1", b"2")
                 pressure = (
                     int(value) if status == 0 and len(value) <= 10 and value.isdigit() else None
                 )
@@ -424,7 +424,7 @@ def _background_pressure_refusal(until, diagnostic, site, sample_resources=None)
                 reason = None if normal else "system_pressure_unavailable"
                 outcome = (
                     "non_normal"
-                    if pressure is not None and pressure != 1
+                    if pressure is not None
                     else "invalid_output"
                     if status == 0
                     else "os_error"

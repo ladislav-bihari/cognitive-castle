@@ -10,28 +10,43 @@ import sys
 MIB = 1024**2
 ROOT = Path(__file__).resolve().parents[1]
 RETIRED_PACKET_ROOT = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b_fixture"
-TRUSTED_PACKET_ROOT = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b_fixture-continuation1"
+TRUSTED_PACKET_ROOT = (
+    ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b_fixture-continuation1"
+)
 RETIRED_CONFIGURATION_PATH = (
     ROOT / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification.json"
 )
 PREVIOUS_CONFIGURATION_PATH = (
-    ROOT / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-continuation1.json"
+    ROOT
+    / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-continuation1.json"
 )
 PUBLISHED_CONFIGURATION_PATH = (
-    ROOT / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-continuation2.json"
+    ROOT
+    / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-continuation2.json"
 )
 COLD_CONFIGURATION_PATH = (
     ROOT / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-cold.json"
 )
 CONFIGURATION_PATH = (
-    ROOT / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-persisted.json"
+    ROOT
+    / ".superpowers/sdd/2026-10-24-unified-lance-memory/layout-52mib-qualification-persisted.json"
 )
-COLD_BASETEMP = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-cold"
-PUBLISHED_BASETEMP = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-continuation2"
+COLD_BASETEMP = (
+    ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-cold"
+)
+PUBLISHED_BASETEMP = (
+    ROOT
+    / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-continuation2"
+)
 SEAL_NAME = "final-seal-persisted.json"
 PIN_NAME = "launch-pin-persisted.json"
-PREVIOUS_BASETEMP = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-continuation1"
-RETIRED_BASETEMP = ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-run1"
+PREVIOUS_BASETEMP = (
+    ROOT
+    / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-continuation1"
+)
+RETIRED_BASETEMP = (
+    ROOT / ".superpowers/sdd/2026-10-25-bounded-lance-layout/task1b-pytest-20261025-6fa6659-run1"
+)
 WORKER_PATH = ROOT / "tests/test_lance_owner_stream.py"
 HELPER_PATH = Path(__file__).absolute()
 sys.dont_write_bytecode = True
@@ -240,11 +255,7 @@ def load_frozen_config(path, expected_hash):
         "mode",
         "continuation",
     }
-    if (
-        value.keys() != required
-        or value["mode"] != "persisted"
-        or len(value["source_roots"]) != 8
-    ):
+    if value.keys() != required or value["mode"] != "persisted" or len(value["source_roots"]) != 8:
         raise ValueError("fixed configuration fields")
     from cognitive_castle import bulk_exact_codec, migration_codec
 
@@ -292,9 +303,8 @@ def load_frozen_config(path, expected_hash):
     continuation = value["continuation"]
     if (
         value["mode"] != "persisted"
-        or continuation.keys() != {
-            "format", "prior_starts", "max_new_starts", "max_cumulative_starts", "prior_files"
-        }
+        or continuation.keys()
+        != {"format", "prior_starts", "max_new_starts", "max_cumulative_starts", "prior_files"}
         or continuation["format"] != "ordered-history52-persisted-replay-v1"
     ):
         raise ValueError("fixed continuation authorization")
@@ -321,14 +331,35 @@ def load_frozen_config(path, expected_hash):
         ROOT / "tests/lance_phase_cost_probe.py",
         run / "evidence/phase-cost-events.bin",
         run / "evidence/phase-cost-result.json",
-        run / "qualifications/append-171-fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992.json",
-        *(run / "evidence" / name for name in ("events-cold.jsonl", "peaks-cold.jsonl", "first-refusal-cold.json")),
+        run
+        / "qualifications/append-171-fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992.json",
+        *(
+            run / "evidence" / name
+            for name in ("events-cold.jsonl", "peaks-cold.jsonl", "first-refusal-cold.json")
+        ),
         TRUSTED_PACKET_ROOT / "final-seal-continuation2.json",
         TRUSTED_PACKET_ROOT / "launch-pin-continuation2.json",
         run / "evidence/publication-loss.json",
-        *(run / "evidence" / name for name in ("events-continuation2.jsonl", "peaks-continuation2.jsonl", "first-refusal-continuation2.json")),
-        *(run / "evidence" / name for name in ("events-continuation1.jsonl", "peaks-continuation1.jsonl", "first-refusal-continuation1.json")),
-        *(run / "evidence" / name for name in ("events.jsonl", "peaks.jsonl", "first-refusal.json")),
+        *(
+            run / "evidence" / name
+            for name in (
+                "events-continuation2.jsonl",
+                "peaks-continuation2.jsonl",
+                "first-refusal-continuation2.json",
+            )
+        ),
+        *(
+            run / "evidence" / name
+            for name in (
+                "events-continuation1.jsonl",
+                "peaks-continuation1.jsonl",
+                "first-refusal-continuation1.json",
+            )
+        ),
+        *(
+            run / "evidence" / name
+            for name in ("events.jsonl", "peaks.jsonl", "first-refusal.json")
+        ),
     }
     if {Path(item["path"]) for item in continuation["prior_files"]} != expected_prior:
         raise ValueError("fixed retained attempt files")
@@ -408,7 +439,10 @@ def census(roots, *, max_entries, max_depth, skip=(), until=float("inf"), sampli
 
 
 def check_temp_entries(retained, *, unlinked=0, workspace=0):
-    if any(type(n) is not int or n < 0 for n in (retained, unlinked, workspace)) or retained + unlinked + workspace > 1008:
+    if (
+        any(type(n) is not int or n < 0 for n in (retained, unlinked, workspace))
+        or retained + unlinked + workspace > 1008
+    ):
         raise ValueError("fixed temp entry reservation")
 
 
@@ -416,7 +450,10 @@ def reserve_stage(snapshot, kind):
     """Charge complete retained families plus the next fixed operation BEFORE IO."""
     profile = candidate_profile()
     if "groups" in snapshot:
-        check_temp_entries(snapshot["groups"]["temp"]["entries"], workspace=int(kind in {"append", "maintenance", "read"}))
+        check_temp_entries(
+            snapshot["groups"]["temp"]["entries"],
+            workspace=int(kind in {"append", "maintenance", "read"}),
+        )
     if kind not in {"append", "maintenance", "read", "queue", "source"}:
         raise ValueError("fixture stage family")
     if any(
@@ -644,7 +681,11 @@ class FixedSession(SemanticSession):
         if result.get("fixture_metrics") is not None:
             self.actual_exact_metrics.append({"operation": operation, **result["fixture_metrics"]})
         clean = {key: value for key, value in result.items() if not key.startswith("fixture_")}
-        if operation == "import_batch_outcome" and clean.get("status") == "ok" and clean.get("outcome") != "ExistingVerified":
+        if (
+            operation == "import_batch_outcome"
+            and clean.get("status") == "ok"
+            and clean.get("outcome") != "ExistingVerified"
+        ):
             self._refusal = "fixture_expected_existing_verified"
             return {"status": "unavailable", "reason": self._refusal}
         self.last_exact_result = clean
@@ -931,9 +972,14 @@ def verify_continuation(config):
     import stat
 
     claim = config["continuation"]
-    if any(type(claim.get(key)) is not int or claim[key] != expected for key, expected in (
-        ("prior_starts", 1083), ("max_new_starts", 7), ("max_cumulative_starts", 1090)
-    )):
+    if any(
+        type(claim.get(key)) is not int or claim[key] != expected
+        for key, expected in (
+            ("prior_starts", 1083),
+            ("max_new_starts", 7),
+            ("max_cumulative_starts", 1090),
+        )
+    ):
         raise ValueError("fixed cumulative continuation schedule")
     if not isinstance(claim["prior_files"], list) or not 14 <= len(claim["prior_files"]) <= 37:
         raise ValueError("bounded retained file claims")
@@ -944,11 +990,15 @@ def verify_continuation(config):
         path = Path(item["path"])
         info = path.lstat()
         if (
-            not path.is_absolute() or path in retained
+            not path.is_absolute()
+            or path in retained
             or any(p.is_symlink() for p in [path, *path.parents])
-            or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-            or info.st_nlink != 1 or info.st_mode & 0o022
-            or type(item["bytes"]) is not int or not 1 <= item["bytes"] <= 4 * MIB
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or info.st_mode & 0o022
+            or type(item["bytes"]) is not int
+            or not 1 <= item["bytes"] <= 4 * MIB
             or info.st_size != item["bytes"]
         ):
             raise ValueError("retained bounded private evidence")
@@ -956,7 +1006,9 @@ def verify_continuation(config):
         if hashlib.sha256(raw).hexdigest() != item["sha256"]:
             raise ValueError("retained attempt digest changed")
         retained[path] = raw
-        attested.append({"path": str(path), "identity": file_identity(info), "sha256": item["sha256"]})
+        attested.append(
+            {"path": str(path), "identity": file_identity(info), "sha256": item["sha256"]}
+        )
     evidence = Path(config["run_root"]) / "evidence"
     starts = 0
     for suffix, expected_starts, expected_ends, failure_kind, failure_reason in (
@@ -965,9 +1017,14 @@ def verify_continuation(config):
         ("-continuation2", 1075, 1074, "append", "fixture census deadline"),
         ("-cold", 1080, 1079, "append", "fixture census deadline"),
     ):
-        events, peaks, refusal = (evidence / (name + suffix + extension) for name, extension in (
-            ("events", ".jsonl"), ("peaks", ".jsonl"), ("first-refusal", ".json")
-        ))
+        events, peaks, refusal = (
+            evidence / (name + suffix + extension)
+            for name, extension in (
+                ("events", ".jsonl"),
+                ("peaks", ".jsonl"),
+                ("first-refusal", ".json"),
+            )
+        )
         if not {events, peaks, refusal}.issubset(retained):
             raise ValueError("all retained attempt streams required")
         initial, ended, pending = starts, starts, None
@@ -983,30 +1040,51 @@ def verify_continuation(config):
             elif row.get("phase") == "end" and row["stage"] == pending:
                 ended, pending = row["stage"], None
                 if (row.get("status"), row.get("reason")) != (
-                    ("unavailable", "background_preempted") if expected_starts == expected_ends == ended else ("ok", None)
+                    ("unavailable", "background_preempted")
+                    if expected_starts == expected_ends == ended
+                    else ("ok", None)
                 ):
                     raise ValueError("retained result sequence")
             else:
                 raise ValueError("retained event pairing")
-        if starts != expected_starts or ended != expected_ends or len(retained[peaks].splitlines()) != ended - initial:
+        if (
+            starts != expected_starts
+            or ended != expected_ends
+            or len(retained[peaks].splitlines()) != ended - initial
+        ):
             raise ValueError("retained observed call count")
         if (pending is None) != (expected_starts == expected_ends):
             raise ValueError("retained unpaired start changed")
         if len(retained[refusal]) != 4096 or json.loads(retained[refusal]) != {
-            "stage": expected_starts, "kind": failure_kind, "reason": failure_reason
+            "stage": expected_starts,
+            "kind": failure_kind,
+            "reason": failure_reason,
         }:
             raise ValueError("retained original refusal")
     slot = retained[evidence / "phase-cost-events.bin"]
     result = json.loads(retained[evidence / "phase-cost-result.json"])
     if len(slot) != 32768 or slot[:4096].strip() or slot[31744:].strip():
         raise ValueError("retained diagnostic arena")
-    cells = [json.loads(slot[4096+i*3072:4096+(i+1)*3072]) for i in range(9)]
+    cells = [json.loads(slot[4096 + i * 3072 : 4096 + (i + 1) * 3072]) for i in range(9)]
     for index, stage in enumerate(range(1081, 1084)):
-        begin, end, peak = cells[index*3:index*3+3]
-        if (begin.get("phase"), begin.get("stage"), end.get("phase"), end.get("stage"), end.get("status"), end.get("reason"), peak.get("stage")) != ("start", stage, "end", stage, "ok", None, stage):
+        begin, end, peak = cells[index * 3 : index * 3 + 3]
+        if (
+            begin.get("phase"),
+            begin.get("stage"),
+            end.get("phase"),
+            end.get("stage"),
+            end.get("status"),
+            end.get("reason"),
+            peak.get("stage"),
+        ) != ("start", stage, "end", stage, "ok", None, stage):
             raise ValueError("retained diagnostic sequence")
         starts += 1
-    if starts != 1083 or result.get("calls") != starts or result.get("diagnostic_only") is not True or result.get("receipt_matches") is not True:
+    if (
+        starts != 1083
+        or result.get("calls") != starts
+        or result.get("diagnostic_only") is not True
+        or result.get("receipt_matches") is not True
+    ):
         raise ValueError("diagnostic count only; no cached proof authority")
     return attested
 
@@ -1064,9 +1142,11 @@ class DiskLedger:
                 [exact], max_entries=1024, max_depth=6, until=until, sampling=sampling
             ),
             "harness": census(
-                [self.run, self.config["packet_root"], *(
-                    [RETIRED_PACKET_ROOT] if self.config.get("continuation") else []
-                )],
+                [
+                    self.run,
+                    self.config["packet_root"],
+                    *([RETIRED_PACKET_ROOT] if self.config.get("continuation") else []),
+                ],
                 max_entries=288,
                 max_depth=6,
                 skip=[exact, temporary],
@@ -1084,7 +1164,18 @@ class DiskLedger:
         if self.config.get("pytest_basetemp") and Path(self.config["pytest_basetemp"]).exists():
             additional.append(self.config["pytest_basetemp"])
         if self.config.get("continuation"):
-            additional.extend([RETIRED_CONFIGURATION_PATH, RETIRED_BASETEMP, PREVIOUS_CONFIGURATION_PATH, PREVIOUS_BASETEMP, PUBLISHED_CONFIGURATION_PATH, PUBLISHED_BASETEMP, COLD_CONFIGURATION_PATH, COLD_BASETEMP])
+            additional.extend(
+                [
+                    RETIRED_CONFIGURATION_PATH,
+                    RETIRED_BASETEMP,
+                    PREVIOUS_CONFIGURATION_PATH,
+                    PREVIOUS_BASETEMP,
+                    PUBLISHED_CONFIGURATION_PATH,
+                    PUBLISHED_BASETEMP,
+                    COLD_CONFIGURATION_PATH,
+                    COLD_BASETEMP,
+                ]
+            )
         if additional:
             extra = census(additional, max_entries=288, max_depth=2, until=until)
             for name in ("entries", "files", "directories", "logical_bytes", "allocated_bytes"):
@@ -1092,7 +1183,9 @@ class DiskLedger:
         # Pinned existing checkout code is read-only baseline, not native output.
         # Account its files too; do not traverse the checkout or follow links.
         code_bytes = 0
-        for attested in self.config.get("_attested_files", []) + self.config.get("_prior_attested_files", []):
+        for attested in self.config.get("_attested_files", []) + self.config.get(
+            "_prior_attested_files", []
+        ):
             file = Path(attested["path"])
             info = file.lstat()
             if file_identity(info) != attested["identity"] or (
@@ -1375,7 +1468,9 @@ def exact_worker_call(config, qualification, store, operation, temporary, functi
     def sample():
         snapshot = ledger.snapshot(sampling=True)
         fd = own_fd_metrics()
-        check_temp_entries(snapshot["groups"]["temp"]["entries"], unlinked=fd["open_unlinked_entries"])
+        check_temp_entries(
+            snapshot["groups"]["temp"]["entries"], unlinked=fd["open_unlinked_entries"]
+        )
         unlinked = max(fd["open_unlinked_logical_bytes"], fd["open_unlinked_allocated_bytes"])
         logical = (
             sum(group["logical_bytes"] for group in snapshot["groups"].values())
@@ -1612,7 +1707,9 @@ def actual_tick(config, ledger, book, *, lost_publication=False, cold=False):
     with FixedSession(
         config, ledger, book, role="loss" if lost_publication else "cold" if cold else "stage"
     ) as session:
-        observed = ObservedPersistedSession(session, loss="import_batch:1" if lost_publication else None)
+        observed = ObservedPersistedSession(
+            session, loss="import_batch:1" if lost_publication else None
+        )
         result = _fixture_tick_persisted(observed, book.registration)
         elapsed = time.monotonic() - started
         if elapsed >= 5 or session.remaining <= 0:
@@ -1745,9 +1842,12 @@ def cold_run(config):
 def observe_geometry(config, original, metrics, *args, **kwargs):
     actual = original(*args, **kwargs)
     if config["mode"] == "persisted" and actual != {
-        "version": 189, "physical_rows": 13696, "fragments": 171
+        "version": 189,
+        "physical_rows": 13696,
+        "fragments": 171,
     }:
         from cognitive_castle.lance_exact_store import _StoreError
+
         raise _StoreError("stale")
     metrics["geometry"] = actual
     return actual
@@ -1761,9 +1861,13 @@ def require_resume_boundary(book, state, loss):
     after = {"version": 189, "physical_rows": 13696, "fragments": 171}
     pending = state.get("pending")
     if (
-        book.ordinal != 171 or book.geometry != before or pending is None
-        or pending != book.active or book.reference is None
-        or pending.get("intent_id") != "fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992"
+        book.ordinal != 171
+        or book.geometry != before
+        or pending is None
+        or pending != book.active
+        or book.reference is None
+        or pending.get("intent_id")
+        != "fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992"
         or book.last_ack != "4187eef5b0897f2b8f4424823e5b229fcfa447b3d981ff413c73e137aa4c20b6"
     ):
         raise ValueError("cold gate requires actual ACK170 and pending171")
@@ -1771,7 +1875,8 @@ def require_resume_boundary(book, state, loss):
     if reference != book.reference or value["expected_states"] != [before, after]:
         raise ValueError("retained pending171 exact before/after pin")
     if (
-        loss["intent_id"] != pending["intent_id"] or loss["phase"] != "publish"
+        loss["intent_id"] != pending["intent_id"]
+        or loss["phase"] != "publish"
         or loss["reason"] != "fixture_lost_response"
         or loss["actual_receipt"] != expected_receipt(pending)
     ):

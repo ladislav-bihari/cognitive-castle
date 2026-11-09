@@ -12,6 +12,7 @@ import sys
 import shlex
 import hashlib
 import fnmatch
+import json
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
@@ -1279,28 +1280,47 @@ def status(palace_path: str):
         print("  Run: castle init <dir> then castle mine <dir>")
         return
 
-    # Count by wing and room — paginate to avoid SQLite "too many SQL
-    # variables" error on large palaces (see #802, #850).
     total = col.count()
     wing_rooms: dict = defaultdict(lambda: defaultdict(int))
     # Per-wing metadata sample for the info-health line below, capped at 500
     # rows/wing (arbitrary order — whatever order this scan yields).
     wing_novelty_sample: dict = defaultdict(list)
-    batch_size = 5000
-    offset = 0
-    while offset < total:
-        r = col.get(limit=batch_size, offset=offset, include=["metadatas"])
-        batch = r["metadatas"]
-        if not batch:
-            break
-        for m in batch:
-            m = m or {}
-            wing = m.get("wing", "?")
-            wing_rooms[wing][m.get("room", "?")] += 1
-            sample = wing_novelty_sample[wing]
-            if len(sample) < 500:
-                sample.append(m)
-        offset += len(batch)
+    if hasattr(col, "iter_columns"):
+        # One pass over three short columns. Paging with ``col.get(offset=)``
+        # rescans the table from row zero for every page: 104 scans and over
+        # a minute on a 520K-drawer palace. The metadata JSON is parsed only
+        # for the rows that enter a wing's sample.
+        columns = ["wing", "room", "metadata_json"]
+        for batch in col.iter_columns(columns):
+            rows = zip(*(batch.get(c, ()) for c in columns))
+            for wing, room, raw in rows:
+                wing = wing or "?"
+                wing_rooms[wing][room or "?"] += 1
+                sample = wing_novelty_sample[wing]
+                if len(sample) < 500:
+                    try:
+                        meta = json.loads(raw) if raw else {}
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                    sample.append(meta if isinstance(meta, dict) else {})
+    else:
+        # Paginate to avoid SQLite "too many SQL variables" error on large
+        # palaces (see #802, #850).
+        batch_size = 5000
+        offset = 0
+        while offset < total:
+            r = col.get(limit=batch_size, offset=offset, include=["metadatas"])
+            batch = r["metadatas"]
+            if not batch:
+                break
+            for m in batch:
+                m = m or {}
+                wing = m.get("wing", "?")
+                wing_rooms[wing][m.get("room", "?")] += 1
+                sample = wing_novelty_sample[wing]
+                if len(sample) < 500:
+                    sample.append(m)
+            offset += len(batch)
 
     print(f"\n{'=' * 55}")
     print(f"  Cognitive Castle Status — {total} drawers")

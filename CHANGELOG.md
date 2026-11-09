@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Fixed
+- `castle status` reads the palace in one pass over the `wing`, `room` and
+  `metadata_json` columns instead of paging with `col.get(offset=...)`, which
+  rescanned the table from row zero for every 5,000-row page (104 scans, 66 s
+  and 1.2 GB on a 520K-drawer palace; now 3 s and 0.4 GB with identical output).
 - **`castle prune-revisions` no longer reads drawer text in 10,000-row
   batches.** Legacy whole-file drawers run to 100+ MB each, so one batch of
   them was several GB of text at once and the dry run was OOM-killed on a

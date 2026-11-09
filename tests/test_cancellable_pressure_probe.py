@@ -184,7 +184,7 @@ def test_normal_is_not_accepted_after_cleanup_consumes_remaining_budget():
 
 def test_non_normal_nonzero_oversized_and_spawn_errors_fail_closed():
     for config in (
-        {"output": b"2"},
+        {"output": b"4"},
         {"returncode": 1},
         {"output": b"1" * 65},
         {"spawn_error": True},
@@ -250,3 +250,53 @@ if __name__ == "__main__":
     for test in tests:
         test()
     print(json.dumps({"pure_passed": len(tests), "actual_probe_or_native_fixture_run": False}))
+
+
+def test_native_slow_normal_and_waiter_leave_no_pressure_child():
+    """Root-only actual-process fixture: two fixed Python stubs, no source/DB engines."""
+    import sys
+
+    if sys.platform != "darwin":
+        import pytest
+
+        pytest.skip("macOS pressure-probe process fixture")
+    from test_memory_runtime import parent
+
+    value = parent(
+        "import os,time,json,subprocess,psutil;from cognitive_castle import memory_runtime as r;"
+        "original=r.subprocess.Popen;original_waiting=r.interactive_waiting;children=[];waiters=[];"
+        "delay=[.08];"
+        "\ndef stub(command,**kwargs):\n"
+        " assert command==['/usr/sbin/sysctl','-n','kern.memorystatus_vm_pressure_level']\n"
+        " p=original([sys.executable,'-I','-c','import time;time.sleep('+repr(delay[0])+');print(1,flush=True)'],**kwargs)\n"
+        " children.append((p,psutil.Process(p.pid)));return p\n"
+        "r.subprocess.Popen=stub;fd=r._admission();"
+        "\ntry:\n"
+        " normal=r._background_pressure_refusal(time.monotonic()+1,{},'host_initial')\n"
+        " delay[0]=10;started=time.monotonic()\n"
+        " def waiting():\n"
+        "  if time.monotonic()-started>=.03 and not waiters:waiters.append(r._waiting_marker())\n"
+        "  return original_waiting()\n"
+        " r.interactive_waiting=waiting\n"
+        " cancelled=r._background_pressure_refusal(time.monotonic()+1,{},'host_initial')\n"
+        " elapsed=time.monotonic()-started\n"
+        "finally:\n"
+        " clean=all(p.returncode is not None and p.stdout.closed and not identity.is_running() for p,identity in children)\n"
+        " for p,identity in children:\n"
+        "  if p.poll() is None:p.kill()\n"
+        "  p.stdout.close();p.wait(timeout=.2)\n"
+        " for waiter in waiters:os.close(waiter)\n"
+        " os.close(fd)\n"
+        "assert normal is None and cancelled=='background_preempted'\n"
+        "assert clean and len(children)==2 and all(not identity.is_running() for p,identity in children)\n"
+        "print(json.dumps(dict(normal=normal,cancelled=cancelled,cancel_elapsed=elapsed,children=2,survivors=0)))"
+    )
+    assert value["normal"] is None and value["cancelled"] == "background_preempted"
+    assert value["cancel_elapsed"] < 0.5 and value["children"] == 2 and value["survivors"] == 0
+    print("CANCELLABLE_PRESSURE_MEASUREMENTS", json.dumps(value, sort_keys=True), flush=True)
+
+
+def test_warning_pressure_probe_is_accepted_within_its_original_budget():
+    probe, _, children, selector, _, _ = subject(output=b"2")
+    assert probe(102.0, {}, "host_initial") is None
+    assert children[0].stdout.closed and selector.closed

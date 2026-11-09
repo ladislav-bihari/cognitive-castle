@@ -12,7 +12,9 @@ import sqlite3
 import stat
 import time
 
-MAX_STORE_BYTES = 1024**3
+# Live sidecar budget; SQLite pages may use a third (the rest covers journal/temp).
+# 1 GiB filled within a week of ordinary capture, stopping all new writes.
+MAX_STORE_BYTES = 4 * 1024**3
 DB_NAME = "memory.sqlite3"
 
 

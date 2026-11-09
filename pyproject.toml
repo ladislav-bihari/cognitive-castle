@@ -42,7 +42,7 @@ lancedb = "cognitive_castle.backends.lancedb_backend:LanceDBBackend"
 [project.entry-points."cognitive_castle.sources"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff==0.17.1", "psutil>=5.9"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff==0.17.3", "psutil>=5.9"]
 memory = ["psutil>=5.9"]
 history = ["psutil>=5.9", "pylance==4.0.1"]
 spellcheck = ["autocorrect>=2.0"]
@@ -51,7 +51,7 @@ dml    = ["onnxruntime-directml>=1.16"]
 coreml = ["onnxruntime>=1.16"]
 
 [dependency-groups]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff==0.17.1", "psutil>=5.9"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff==0.17.3", "psutil>=5.9"]
 
 [build-system]
 requires = ["hatchling"]
@@ -64,7 +64,7 @@ allow-direct-references = true
 packages = ["cognitive_castle"]
 
 [tool.ruff]
-required-version = "==0.15.12"
+required-version = "==0.17.3"
 line-length = 100
 target-version = "py39"
 extend-exclude = ["benchmarks", "cognitive_castle/understanding", "cognitive_castle/_vendor"]

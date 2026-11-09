@@ -44,7 +44,10 @@ def _ordered_execute(request):
     operation = request["operation"]
     fields = {
         "ordered_import_batch": ({"batch_id", "source_binding", "entries", "finalizations"}, set()),
-        "ordered_import_batch_outcome": ({"batch_id", "source_binding", "entries", "finalizations"}, set()),
+        "ordered_import_batch_outcome": (
+            {"batch_id", "source_binding", "entries", "finalizations"},
+            set(),
+        ),
         "ordered_receipt": ({"namespace", "key"}, set()),
         "ordered_build_id_index": (set(), set()),
         "ordered_bulk_owner": ({"owner"}, {"version"}),
@@ -80,11 +83,16 @@ def _ordered_execute(request):
         and arguments["source_binding"] != qualification.source_binding
     ):
         raise ValueError("qualification source")
-    store_type = _ReplayOutcomeStore if operation == "ordered_import_batch_outcome" else OrderedBulkExactStore
+    store_type = (
+        _ReplayOutcomeStore
+        if operation == "ordered_import_batch_outcome"
+        else OrderedBulkExactStore
+    )
     store = store_type(
         Path(request["directory"]),
         qualification=qualification,
-        writable=operation in {"ordered_import_batch", "ordered_import_batch_outcome", "ordered_build_id_index"},
+        writable=operation
+        in {"ordered_import_batch", "ordered_import_batch_outcome", "ordered_build_id_index"},
     )
 
     def invoke_actual():
@@ -111,7 +119,9 @@ def _ordered_execute(request):
     if len(sys.argv) == 3:
         temporary = Path(reference).parent / "native-tmp"
         profile = None
-        if operation in {"ordered_import_batch_outcome", "ordered_receipt"} or (operation == "ordered_bulk_owner" and temporary.exists()):
+        if operation in {"ordered_import_batch_outcome", "ordered_receipt"} or (
+            operation == "ordered_bulk_owner" and temporary.exists()
+        ):
             profile = _fixture_support().set_exact_environment(temporary)
         result = invoke_actual()
         if profile:
@@ -1230,60 +1240,131 @@ def test_private_outcome_fresh_append_then_persisted_reopen(tmp_path):
     original = "a" * 16384 + "Ω\x00tail"
     prepared = prepare_remember("private-live", original)
     assert len(prepared.records) == 3
-    live = dict(namespace=prepared.namespace, key=prepared.request_id,
-                digest=prepared.digest, receipt=prepared.receipt)
-    rows, owner = codec.prepare_owner("private-tiny", "snapshot", prepared.records,
-        metadata="{}", columns="", scopes="[]", descriptor="tiny", live=live)
+    live = dict(
+        namespace=prepared.namespace,
+        key=prepared.request_id,
+        digest=prepared.digest,
+        receipt=prepared.receipt,
+    )
+    rows, owner = codec.prepare_owner(
+        "private-tiny",
+        "snapshot",
+        prepared.records,
+        metadata="{}",
+        columns="",
+        scopes="[]",
+        descriptor="tiny",
+        live=live,
+    )
     assert len(rows) == 9
     args = arguments(rows, [owner], "private-tiny-batch")
-    reference, digest = freeze(directory, owner, 0, 0, 0, expected_states=[
-        {"version": 0, "physical_rows": 0, "fragments": 0},
-        {"version": 1, "physical_rows": 12, "fragments": 1},
-    ])
-    expected = dict(status="ok", state="committed_batch",
-        receipt_id=codec.key("batch", args["batch_id"]), digest=codec.validate_batch(**args),
-        records=3, published_owners=1, entries=9)
+    reference, digest = freeze(
+        directory,
+        owner,
+        0,
+        0,
+        0,
+        expected_states=[
+            {"version": 0, "physical_rows": 0, "fragments": 0},
+            {"version": 1, "physical_rows": 12, "fragments": 1},
+        ],
+    )
+    expected = dict(
+        status="ok",
+        state="committed_batch",
+        receipt_id=codec.key("batch", args["batch_id"]),
+        digest=codec.validate_batch(**args),
+        records=3,
+        published_owners=1,
+        entries=9,
+    )
     audit = []
+
     class Session(SemanticSession):
         def exact(self, operation, values):
             assert temporary.is_dir()
             before_tree = private_tiny_retained_census(tmp_path, until=self._until)
             resource_count = len(self.resources)
-            result = self._run_stage(dict(directory=str(directory), operation=operation,
-                arguments=values, qualification=str(reference), qualification_hash=digest),
+            result = self._run_stage(
+                dict(
+                    directory=str(directory),
+                    operation=operation,
+                    arguments=values,
+                    qualification=str(reference),
+                    qualification_hash=digest,
+                ),
                 worker_command=[sys.executable, "-I", str(WORKER), str(reference), digest],
                 cap=3 if operation == "ordered_import_batch_outcome" else 2,
-                rss=192*1024**2, total=256*1024**2)
-            audit.append(dict(operation=operation, status=result.get("status"),
-                reason=result.get("reason"), outcome=result.get("outcome"),
-                native_imported=result.get("fixture_native_imported"),
-                resources=self.resources[-1] if len(self.resources) > resource_count else None,
-                retained_before=before_tree,
-                profile=result.get("fixture_profile")))
+                rss=192 * 1024**2,
+                total=256 * 1024**2,
+            )
+            audit.append(
+                dict(
+                    operation=operation,
+                    status=result.get("status"),
+                    reason=result.get("reason"),
+                    outcome=result.get("outcome"),
+                    native_imported=result.get("fixture_native_imported"),
+                    resources=self.resources[-1] if len(self.resources) > resource_count else None,
+                    retained_before=before_tree,
+                    profile=result.get("fixture_profile"),
+                )
+            )
             try:
-                audit[-1]["retained_after"] = private_tiny_retained_census(tmp_path, until=self._until)
+                audit[-1]["retained_after"] = private_tiny_retained_census(
+                    tmp_path, until=self._until
+                )
             finally:
-                print("PRIVATE_TINY_STAGE", json.dumps(audit[-1],sort_keys=True),flush=True)
-            return {key:value for key,value in result.items() if not key.startswith("fixture_")}
+                print("PRIVATE_TINY_STAGE", json.dumps(audit[-1], sort_keys=True), flush=True)
+            return {key: value for key, value in result.items() if not key.startswith("fixture_")}
+
     started = time.monotonic()
     with Session(ROOT / "unused-private-tiny", interactive=False) as session:
         first = session.exact("ordered_import_batch_outcome", args)
-        assert first == {"status":"ok", "outcome":"FreshAppend", "receipt":expected}, first
+        assert first == {"status": "ok", "outcome": "FreshAppend", "receipt": expected}, first
         before = canonical_files(directory)
         second = session.exact("ordered_import_batch_outcome", args)
-        version = validate_outcome(second, expected, directory, "snapshot", args["batch_id"], expected_ids(rows, [owner]), until=session._until)
+        version = validate_outcome(
+            second,
+            expected,
+            directory,
+            "snapshot",
+            args["batch_id"],
+            expected_ids(rows, [owner]),
+            until=session._until,
+        )
         assert version == 1 and canonical_files(directory) == before
-        observed = session.exact("ordered_bulk_owner", {"owner":owner["owner"], "version":version})
-        assert observed["status"] == "ok" and observed["version"] == version and observed["manifest"] == owner
-        receipt = session.exact("ordered_receipt", {"namespace":prepared.namespace,"key":prepared.request_id})
-        assert receipt == {"status":"ok", "digest":prepared.digest,"receipt":prepared.receipt}
+        observed = session.exact(
+            "ordered_bulk_owner", {"owner": owner["owner"], "version": version}
+        )
+        assert (
+            observed["status"] == "ok"
+            and observed["version"] == version
+            and observed["manifest"] == owner
+        )
+        receipt = session.exact(
+            "ordered_receipt", {"namespace": prepared.namespace, "key": prepared.request_id}
+        )
+        assert receipt == {"status": "ok", "digest": prepared.digest, "receipt": prepared.receipt}
         assert canonical_files(directory) == before and session.remaining > 0
     elapsed = time.monotonic() - started
     assert elapsed < 5
-    assert all(item["profile"] == {"pool_bytes":16*1024**2, "tracked_spill_bytes":64*1024**2,
-        "bypass_present":False, "tmpdir":str(temporary)} for item in audit)
-    print("PRIVATE_TINY_QUALIFICATION", json.dumps({"elapsed":elapsed,"stages":audit},sort_keys=True),flush=True)
-    assert not {"lance","pyarrow","sqlite3"}.intersection(sys.modules)
+    assert all(
+        item["profile"]
+        == {
+            "pool_bytes": 16 * 1024**2,
+            "tracked_spill_bytes": 64 * 1024**2,
+            "bypass_present": False,
+            "tmpdir": str(temporary),
+        }
+        for item in audit
+    )
+    print(
+        "PRIVATE_TINY_QUALIFICATION",
+        json.dumps({"elapsed": elapsed, "stages": audit}, sort_keys=True),
+        flush=True,
+    )
+    assert not {"lance", "pyarrow", "sqlite3"}.intersection(sys.modules)
 
 
 def test_large_cold_refusal_does_not_create_uncharged_result(tmp_path, monkeypatch):
@@ -1389,44 +1470,68 @@ def _persisted_gate_logs(harness, tmp_path):
     evidence.mkdir(parents=True)
     rows = []
     for stage in range(1, 123):
-        rows.extend([
-            {"phase": "start", "stage": stage},
-            {"phase": "end", "stage": stage, "status": "ok" if stage < 122 else "unavailable",
-             "reason": None if stage < 122 else "background_preempted"},
-        ])
+        rows.extend(
+            [
+                {"phase": "start", "stage": stage},
+                {
+                    "phase": "end",
+                    "stage": stage,
+                    "status": "ok" if stage < 122 else "unavailable",
+                    "reason": None if stage < 122 else "background_preempted",
+                },
+            ]
+        )
     paths = {
         "events.jsonl": "".join(json.dumps(row) + "\n" for row in rows).encode(),
         "peaks.jsonl": b"{}\n" * 122,
         "first-refusal.json": json.dumps(
             {"stage": 122, "kind": "queue", "reason": "background_preempted"}
-        ).encode().ljust(4096, b" "),
+        )
+        .encode()
+        .ljust(4096, b" "),
     }
     second = []
     for stage in range(123, 226):
-        second.extend([
-            {"phase": "start", "stage": stage},
-            {"phase": "end", "stage": stage, "status": "ok" if stage < 225 else "unavailable",
-             "reason": None if stage < 225 else "background_preempted"},
-        ])
-    paths.update({
-        "events-continuation1.jsonl": "".join(json.dumps(row) + "\n" for row in second).encode(),
-        "peaks-continuation1.jsonl": b"{}\n" * 103,
-        "first-refusal-continuation1.json": json.dumps(
-            {"stage": 225, "kind": "append", "reason": "background_preempted"}
-        ).encode().ljust(4096, b" "),
-    })
+        second.extend(
+            [
+                {"phase": "start", "stage": stage},
+                {
+                    "phase": "end",
+                    "stage": stage,
+                    "status": "ok" if stage < 225 else "unavailable",
+                    "reason": None if stage < 225 else "background_preempted",
+                },
+            ]
+        )
+    paths.update(
+        {
+            "events-continuation1.jsonl": "".join(
+                json.dumps(row) + "\n" for row in second
+            ).encode(),
+            "peaks-continuation1.jsonl": b"{}\n" * 103,
+            "first-refusal-continuation1.json": json.dumps(
+                {"stage": 225, "kind": "append", "reason": "background_preempted"}
+            )
+            .encode()
+            .ljust(4096, b" "),
+        }
+    )
     third = []
     for stage in range(226, 1076):
         third.append({"phase": "start", "stage": stage})
         if stage < 1075:
             third.append({"phase": "end", "stage": stage, "status": "ok", "reason": None})
-    paths.update({
-        "events-continuation2.jsonl": "".join(json.dumps(row) + "\n" for row in third).encode(),
-        "peaks-continuation2.jsonl": b"{}\n" * 849,
-        "first-refusal-continuation2.json": json.dumps(
-            {"stage": 1075, "kind": "append", "reason": "fixture census deadline"}
-        ).encode().ljust(4096, b" "),
-    })
+    paths.update(
+        {
+            "events-continuation2.jsonl": "".join(json.dumps(row) + "\n" for row in third).encode(),
+            "peaks-continuation2.jsonl": b"{}\n" * 849,
+            "first-refusal-continuation2.json": json.dumps(
+                {"stage": 1075, "kind": "append", "reason": "fixture census deadline"}
+            )
+            .encode()
+            .ljust(4096, b" "),
+        }
+    )
     fourth = []
     for stage in range(1076, 1081):
         fourth.append({"phase": "start", "stage": stage})
@@ -1434,30 +1539,56 @@ def _persisted_gate_logs(harness, tmp_path):
             fourth.append({"phase": "end", "stage": stage, "status": "ok", "reason": None})
     cells = []
     for stage in range(1081, 1084):
-        cells.extend([{"phase": "start", "stage": stage},
-                      {"phase": "end", "stage": stage, "status": "ok", "reason": None},
-                      {"stage": stage}])
-    slot = b" " * 4096 + b"".join(json.dumps(cell).encode().ljust(3072, b" ") for cell in cells) + b" " * 1024
-    paths.update({
-        "events-cold.jsonl": "".join(json.dumps(row) + "\n" for row in fourth).encode(),
-        "peaks-cold.jsonl": b"{}\n" * 4,
-        "first-refusal-cold.json": json.dumps({"stage": 1080, "kind": "append", "reason": "fixture census deadline"}).encode().ljust(4096, b" "),
-        "phase-cost-events.bin": slot,
-        "phase-cost-result.json": json.dumps({"calls":1083, "diagnostic_only":True, "receipt_matches":True}).encode().ljust(4096,b" "),
-    })
+        cells.extend(
+            [
+                {"phase": "start", "stage": stage},
+                {"phase": "end", "stage": stage, "status": "ok", "reason": None},
+                {"stage": stage},
+            ]
+        )
+    slot = (
+        b" " * 4096
+        + b"".join(json.dumps(cell).encode().ljust(3072, b" ") for cell in cells)
+        + b" " * 1024
+    )
+    paths.update(
+        {
+            "events-cold.jsonl": "".join(json.dumps(row) + "\n" for row in fourth).encode(),
+            "peaks-cold.jsonl": b"{}\n" * 4,
+            "first-refusal-cold.json": json.dumps(
+                {"stage": 1080, "kind": "append", "reason": "fixture census deadline"}
+            )
+            .encode()
+            .ljust(4096, b" "),
+            "phase-cost-events.bin": slot,
+            "phase-cost-result.json": json.dumps(
+                {"calls": 1083, "diagnostic_only": True, "receipt_matches": True}
+            )
+            .encode()
+            .ljust(4096, b" "),
+        }
+    )
     records = []
     for name, raw in paths.items():
         path = evidence / name
         path.write_bytes(raw)
-        records.append({"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+        records.append(
+            {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+        )
     return {
         "run_root": str(run),
-        "continuation": {"prior_starts": 1083, "max_new_starts": 7,
-                         "max_cumulative_starts": 1090, "prior_files": records},
+        "continuation": {
+            "prior_starts": 1083,
+            "max_new_starts": 7,
+            "max_cumulative_starts": 1090,
+            "prior_files": records,
+        },
     }
 
 
-def test_large_persisted_gate_counts_three_streams_and_unpaired_start_without_reset(tmp_path, monkeypatch):
+def test_large_persisted_gate_counts_three_streams_and_unpaired_start_without_reset(
+    tmp_path, monkeypatch
+):
     harness = large_harness()
     config = _persisted_gate_logs(harness, tmp_path)
     ledger = harness.DiskLedger(config)
@@ -1489,28 +1620,59 @@ def test_large_persisted_gate_rejects_changed_or_truncated_prior_log(tmp_path, t
         path.write_bytes(path.read_bytes() + b" ")
     else:
         path.write_text("\n".join(path.read_text().splitlines()[:-2]) + "\n")
-        record.update(bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        record.update(
+            bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        )
     with pytest.raises(ValueError):
         harness.DiskLedger(config)
 
 
-@pytest.mark.parametrize("mutation", [None, "missing_pending", "wrong_intent", "wrong_geometry", "wrong_pin", "wrong_loss", "wrong_ack"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing_pending",
+        "wrong_intent",
+        "wrong_geometry",
+        "wrong_pin",
+        "wrong_loss",
+        "wrong_ack",
+    ],
+)
 def test_large_persisted_gate_requires_actual_ack170_and_pending171(monkeypatch, mutation):
     from types import SimpleNamespace
 
     harness = large_harness()
     before = {"version": 188, "physical_rows": 13621, "fragments": 170}
     after = {"version": 189, "physical_rows": 13696, "fragments": 171}
-    intent = {"intent_id": "fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992",
-        "owners": [{}], "digest": "13c27d5255967cadf6ff47631ad23c2233564a19a753f3ac6f603f4cfadfe782",
-        "records": 37, "entries": 73}
-    loss = {"intent_id": intent["intent_id"], "phase": "publish", "reason": "fixture_lost_response",
-        "actual_receipt": {"status": "ok", "state": "committed_batch",
+    intent = {
+        "intent_id": "fb5a90aaf74540004785b61f1066d34e81185cb28f3a35889b653afc408ab992",
+        "owners": [{}],
+        "digest": "13c27d5255967cadf6ff47631ad23c2233564a19a753f3ac6f603f4cfadfe782",
+        "records": 37,
+        "entries": 73,
+    }
+    loss = {
+        "intent_id": intent["intent_id"],
+        "phase": "publish",
+        "reason": "fixture_lost_response",
+        "actual_receipt": {
+            "status": "ok",
+            "state": "committed_batch",
             "receipt_id": "receipt:55a2fe9838f63cac92cc4e51b2d3829f9c223338d87153cd183895166ba8edec",
-            "digest": intent["digest"], "records": 37, "published_owners": 1, "entries": 73}}
-    book = SimpleNamespace(ordinal=171, geometry=dict(before), active=intent,
+            "digest": intent["digest"],
+            "records": 37,
+            "published_owners": 1,
+            "entries": 73,
+        },
+    }
+    book = SimpleNamespace(
+        ordinal=171,
+        geometry=dict(before),
+        active=intent,
         last_ack="4187eef5b0897f2b8f4424823e5b229fcfa447b3d981ff413c73e137aa4c20b6",
-        reference=("/fixed/append-171.json", "a" * 64))
+        reference=("/fixed/append-171.json", "a" * 64),
+    )
     states = [before, after]
     book._read = lambda *args: ({"expected_states": states}, book.reference)
     state = {"pending": intent}
@@ -1534,22 +1696,28 @@ def test_large_persisted_gate_requires_actual_ack170_and_pending171(monkeypatch,
             harness.require_resume_boundary(book, state, loss)
 
 
-@pytest.mark.parametrize("geometry", [
-    {"version": 189, "physical_rows": 13696, "fragments": 171},
-    {"version": 188, "physical_rows": 13621, "fragments": 170},
-    {"version": 189, "physical_rows": 13695, "fragments": 171},
-])
+@pytest.mark.parametrize(
+    "geometry",
+    [
+        {"version": 189, "physical_rows": 13696, "fragments": 171},
+        {"version": 188, "physical_rows": 13621, "fragments": 170},
+        {"version": 189, "physical_rows": 13695, "fragments": 171},
+    ],
+)
 def test_large_persisted_gate_geometry_refuses_before_import_continues(geometry):
     harness = large_harness()
     metrics, proceeded = {}, []
+
     def invoke():
         harness.observe_geometry({"mode": "persisted"}, lambda: geometry, metrics)
         proceeded.append("import may continue")
+
     if geometry == {"version": 189, "physical_rows": 13696, "fragments": 171}:
         invoke()
         assert metrics["geometry"] == geometry and len(proceeded) == 1
     else:
         from cognitive_castle.lance_exact_store import _StoreError
+
         with pytest.raises(_StoreError) as error:
             invoke()
         assert error.value.status == "stale" and not proceeded and not metrics
@@ -1558,10 +1726,12 @@ def test_large_persisted_gate_geometry_refuses_before_import_continues(geometry)
 def test_large_persisted_gate_private_import_keeps_write_budget_and_temp_entry_reservation():
     h = large_harness()
     assert h.exact_stage("import_batch_outcome") == {
-        "operation": "ordered_import_batch_outcome", "cap": 3,
-        "rss": 192*1024**2, "total": 256*1024**2,
+        "operation": "ordered_import_batch_outcome",
+        "cap": 3,
+        "rss": 192 * 1024**2,
+        "total": 256 * 1024**2,
     }
-    for retained, unlinked, workspace in [(1008,0,1),(1007,2,0)]:
+    for retained, unlinked, workspace in [(1008, 0, 1), (1007, 2, 0)]:
         with pytest.raises(ValueError):
             h.check_temp_entries(retained, unlinked=unlinked, workspace=workspace)
     h.check_temp_entries(1007, unlinked=1)
@@ -1570,66 +1740,116 @@ def test_large_persisted_gate_private_import_keeps_write_budget_and_temp_entry_r
 def test_large_persisted_gate_observed_clock_reaches_private_publisher(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from cognitive_castle import migration_coordinator as coordinator, persisted_replay as replay
+
     h = large_harness()
     directory = tmp_path / "generation" / "exact"
     directory.parent.mkdir(mode=0o700)
     directory.mkdir(mode=0o700)
     identity = "memory:" + "a" * 64
-    args = {"batch_id":"clock", "source_binding":"snapshot", "entries":[{"id":identity}], "finalizations":[]}
-    expected = {"status":"ok","state":"stage_batch","receipt_id":codec.key("batch","clock"),
-        "digest":"b"*64,"records":0,"published_owners":0,"entries":1}
+    args = {
+        "batch_id": "clock",
+        "source_binding": "snapshot",
+        "entries": [{"id": identity}],
+        "finalizations": [],
+    }
+    expected = {
+        "status": "ok",
+        "state": "stage_batch",
+        "receipt_id": codec.key("batch", "clock"),
+        "digest": "b" * 64,
+        "records": 0,
+        "published_owners": 0,
+        "entries": 1,
+    }
     outcome = replay.existing_outcome(expected, directory, "snapshot", "clock", {identity}, 1)
+
     class Session:
         remaining = 5
         resources = []
-        def __init__(self, *args, **kwargs): pass
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def _ready(self): return None
-        def exact(self, *args): return outcome
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def _ready(self):
+            return None
+
+        def exact(self, *args):
+            return outcome
+
     def tick(observed, registration):
-        version, refusal, phase = coordinator._publish_persisted(observed, directory, args, expected)
-        assert (version, refusal, phase) == (1,None,None)
-        return {"status":"ok"}
+        version, refusal, phase = coordinator._publish_persisted(
+            observed, directory, args, expected
+        )
+        assert (version, refusal, phase) == (1, None, None)
+        return {"status": "ok"}
+
     monkeypatch.setattr(h, "FixedSession", Session)
     monkeypatch.setattr(coordinator, "_fixture_tick_persisted", tick)
     result, observed, elapsed = h.actual_tick({}, None, SimpleNamespace(registration={}), cold=True)
-    assert result["status"] == "ok" and observed.counts == {"import_batch_outcome":1}
+    assert result["status"] == "ok" and observed.counts == {"import_batch_outcome": 1}
 
 
 def test_large_persisted_gate_keeps_old_cold_config_and_basetemp_charged(tmp_path, monkeypatch):
     h = large_harness()
     run = tmp_path / "run"
-    for path in (run, run/"generation", run/"generation/exact", run/"generation/coordination", run/"tmp",
-                 tmp_path/"source", tmp_path/"packet", tmp_path/"old-packet", tmp_path/"new-base"):
+    for path in (
+        run,
+        run / "generation",
+        run / "generation/exact",
+        run / "generation/coordination",
+        run / "tmp",
+        tmp_path / "source",
+        tmp_path / "packet",
+        tmp_path / "old-packet",
+        tmp_path / "new-base",
+    ):
         path.mkdir(mode=0o700)
-    monkeypatch.setattr(h,"RETIRED_PACKET_ROOT",tmp_path/"old-packet")
-    for name in ("RETIRED_CONFIGURATION_PATH","PREVIOUS_CONFIGURATION_PATH","PUBLISHED_CONFIGURATION_PATH","COLD_CONFIGURATION_PATH"):
-        path = tmp_path/name
+    monkeypatch.setattr(h, "RETIRED_PACKET_ROOT", tmp_path / "old-packet")
+    for name in (
+        "RETIRED_CONFIGURATION_PATH",
+        "PREVIOUS_CONFIGURATION_PATH",
+        "PUBLISHED_CONFIGURATION_PATH",
+        "COLD_CONFIGURATION_PATH",
+    ):
+        path = tmp_path / name
         path.write_text("retained configuration")
         path.chmod(0o600)
-        monkeypatch.setattr(h,name,path)
-    for name in ("RETIRED_BASETEMP","PREVIOUS_BASETEMP","PUBLISHED_BASETEMP","COLD_BASETEMP"):
-        path=tmp_path/name
+        monkeypatch.setattr(h, name, path)
+    for name in ("RETIRED_BASETEMP", "PREVIOUS_BASETEMP", "PUBLISHED_BASETEMP", "COLD_BASETEMP"):
+        path = tmp_path / name
         path.mkdir(mode=0o700)
-        monkeypatch.setattr(h,name,path)
-    marker=h.COLD_BASETEMP/"retained"
+        monkeypatch.setattr(h, name, path)
+    marker = h.COLD_BASETEMP / "retained"
     marker.write_text("retained body-free pytest evidence")
     marker.chmod(0o600)
-    current=tmp_path/"current-config"
+    current = tmp_path / "current-config"
     current.write_text("new configuration")
     current.chmod(0o600)
-    ledger=object.__new__(h.DiskLedger)
-    ledger.run=run
-    ledger.config={"run_root":str(run),"packet_root":str(tmp_path/"packet"),"source_roots":[str(tmp_path/"source")],
-        "_config_path":str(current),"pytest_basetemp":str(tmp_path/"new-base"),"continuation":{"retained":True}}
-    seen=[]
-    census=h.census
-    def measured(roots,**kwargs):
-        seen.append((list(roots),kwargs["max_entries"]))
-        return census(roots,**kwargs)
-    monkeypatch.setattr(h,"census",measured)
-    snapshot=ledger.snapshot()
+    ledger = object.__new__(h.DiskLedger)
+    ledger.run = run
+    ledger.config = {
+        "run_root": str(run),
+        "packet_root": str(tmp_path / "packet"),
+        "source_roots": [str(tmp_path / "source")],
+        "_config_path": str(current),
+        "pytest_basetemp": str(tmp_path / "new-base"),
+        "continuation": {"retained": True},
+    }
+    seen = []
+    census = h.census
+
+    def measured(roots, **kwargs):
+        seen.append((list(roots), kwargs["max_entries"]))
+        return census(roots, **kwargs)
+
+    monkeypatch.setattr(h, "census", measured)
+    snapshot = ledger.snapshot()
     assert snapshot["groups"]["harness"]["files"] == 6
-    assert any(h.COLD_CONFIGURATION_PATH in roots and h.COLD_BASETEMP in roots for roots,_ in seen)
-    assert any(roots==[run/"tmp"] and cap==1008 for roots,cap in seen)
+    assert any(h.COLD_CONFIGURATION_PATH in roots and h.COLD_BASETEMP in roots for roots, _ in seen)
+    assert any(roots == [run / "tmp"] and cap == 1008 for roots, cap in seen)

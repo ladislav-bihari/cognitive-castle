@@ -58,7 +58,7 @@ with SemanticSession(base/'unused') as session:
         if command != ["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"]:
             return original_popen(command, **kwargs)
         checks.append(command)
-        if phase == "periodic" and len(checks) == 1:
+        if phase == "periodic" and not worker_pid.exists():
             return original_popen([sys.executable, "-I", "-c", "print(1)"], **kwargs)
         entry.write_text("in pressure helper")
         until = time.monotonic() + 0.3

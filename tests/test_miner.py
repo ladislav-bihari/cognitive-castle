@@ -1015,3 +1015,49 @@ def test_mine_skip_kg_env_leaves_enricher_alone(tmp_path, monkeypatch, capsys):
     mine(str(project), str(tmp_path / "palace"))
 
     assert "KG enrichment: skipped" in capsys.readouterr().out
+
+
+def test_status_streams_columns_in_one_pass(tmp_path, capsys):
+    """``status`` must not page through ``col.get(offset=...)``.
+
+    Every LanceDB page with an offset rescans the table from row zero, so
+    paging a 520K-drawer palace in 5,000-row pages took 104 scans and over
+    a minute. Backends that stream columns are read once: ``wing`` and
+    ``room`` for the histogram, ``metadata_json`` only for the novelty
+    sample."""
+    import re
+    from unittest.mock import patch
+
+    class FakeCol:
+        def __init__(self):
+            self.iter_calls = []
+
+        def count(self):
+            return 3
+
+        def get(self, *args, **kwargs):
+            raise AssertionError("status must not page with col.get")
+
+        def iter_columns(self, columns, batch_size=10_000):
+            self.iter_calls.append((list(columns), batch_size))
+            yield {
+                "wing": ["proj", "proj"],
+                "room": ["r1", "r2"],
+                "metadata_json": ['{"novelty": 0.1}', '{"novelty": 0.5}'],
+            }
+            yield {"wing": [None], "room": ["r1"], "metadata_json": [None]}
+
+    col = FakeCol()
+    with patch("cognitive_castle.miner.get_collection", return_value=col):
+        status(str(tmp_path))
+
+    out = capsys.readouterr().out
+    assert len(col.iter_calls) == 1
+    assert set(col.iter_calls[0][0]) == {"wing", "room", "metadata_json"}
+    assert "Cognitive Castle Status — 3 drawers" in out
+    assert "WING: proj" in out
+    assert re.search(r"ROOM: r1\s+1 drawers", out)
+    assert re.search(r"ROOM: r2\s+1 drawers", out)
+    assert "WING: ?" in out
+    assert "median novelty 0.30" in out
+    assert "coverage 100%" in out

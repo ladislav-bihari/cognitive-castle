@@ -74,7 +74,7 @@ def _record_pressure_failure(diagnostic, started, deadline, timeout, outcome, pr
 
 
 def _pressure_ok(*, deadline=None, diagnostic=None):
-    """Fail closed if the supported OS cannot report normal memory pressure."""
+    """Fail closed unless normal or warning pressure is reported before the deadline."""
     started = time.monotonic() if diagnostic is not None else 0.0
     if sys.platform != "darwin":
         return _record_pressure_failure(diagnostic, started, deadline, 0, "unsupported_platform")
@@ -89,11 +89,9 @@ def _pressure_ok(*, deadline=None, diagnostic=None):
             stderr=subprocess.DEVNULL,
             timeout=timeout,
         )
-        on_time = deadline is None or diagnostic is None or time.monotonic() < deadline
+        on_time = deadline is None or time.monotonic() < deadline
         value = value.strip()
-        if value == b"1":
-            if not on_time:
-                _record_pressure_failure(diagnostic, started, deadline, timeout, "late_normal", 1)
+        if on_time and value in (b"1", b"2"):
             return True
         pressure = (
             int(value)
@@ -103,9 +101,9 @@ def _pressure_ok(*, deadline=None, diagnostic=None):
         pressure = pressure if pressure is not None and pressure < 2**31 else None
         outcome = (
             "late_normal"
-            if value == b"1"
+            if value in (b"1", b"2")
             else "non_normal"
-            if pressure is not None and pressure != 1
+            if pressure is not None
             else "invalid_output"
         )
         return _record_pressure_failure(diagnostic, started, deadline, timeout, outcome, pressure)
