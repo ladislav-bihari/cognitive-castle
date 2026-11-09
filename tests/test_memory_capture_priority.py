@@ -11,6 +11,9 @@ from cognitive_castle import memory_runtime as runtime
 def admission(tmp_path, monkeypatch):
     if os.name != "posix":
         pytest.skip("POSIX flock admission only")
+    # Unit tests simulate admission dispatch; load the real host backend before
+    # changing sys.platform so psutil never tries to load a foreign OS extension.
+    __import__("psutil")
     directory = tmp_path / "admission"
     directory.mkdir(mode=0o700)
     monkeypatch.setattr(runtime, "_admission_directory", lambda: directory)

@@ -83,9 +83,16 @@ def unified(tmp_path, monkeypatch):
 
 
 def test_python_brain_cli_mcp_share_common_default(unified, monkeypatch, capsys):
+    import sys
+
+    cli_stdout = sys.stdout
     from cognitive_castle import cli, mcp_server
     from cognitive_castle.searcher import search_memories
 
+    # Import-time MCP stdio protection is intentional (#225). Initialize its
+    # existing restore path before exercising the CLI in this same process.
+    mcp_server._restore_stdout()
+    monkeypatch.setattr(sys, "stdout", cli_stdout)
     palace, api, live, history = unified
     expected = {
         live.recall("sharedneedle")["sources"][0]["id"],

@@ -124,6 +124,9 @@ def test_exact_publish_recovery_after_lost_response_and_registration(tmp_path):
     assert result["status"] == "conflict"
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_fixed_stage_caps_share_absolute_deadline(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
 
@@ -634,6 +637,9 @@ def test_uncommitted_old_intents_do_not_starve_later_recovery(tmp_path):
     assert invoke(directory, "queue_intents")["intents"] == [intents[2], intents[0]]
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_exact_receipt_survives_late_coordination_refusal_with_three_second_total(
     monkeypatch, tmp_path
 ):
@@ -670,6 +676,9 @@ def test_exact_receipt_survives_late_coordination_refusal_with_three_second_tota
     assert all(options["rss_limit"] <= 192 * 1024**2 for _, options in calls)
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_session_releases_admission_after_preemption_and_cannot_launch_more_work(
     monkeypatch, tmp_path
 ):

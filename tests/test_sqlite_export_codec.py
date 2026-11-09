@@ -68,6 +68,9 @@ def test_export_rejects_unregistered_descriptor_without_loading_storage():
     assert not {"sqlite3", "lance", "pyarrow"}.intersection(sys.modules)
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_supervisor_refusal_retains_source_cursor_and_fixed_profile(monkeypatch):
     import os
     from cognitive_castle import memory_runtime

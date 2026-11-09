@@ -13,6 +13,9 @@ def isolated_admission(monkeypatch, tmp_path):
     monkeypatch.setattr(memory_runtime, "_admission_directory", lambda: tmp_path)
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_shared_deadline_expiry_and_admission_release(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
 
@@ -25,6 +28,9 @@ def test_shared_deadline_expiry_and_admission_release(monkeypatch, tmp_path):
     os.close(fd)
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_background_yields_to_interactive_and_host_has_no_native_imports(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
 
@@ -34,6 +40,9 @@ def test_background_yields_to_interactive_and_host_has_no_native_imports(monkeyp
     assert not {"tokenizers", "numpy", "onnxruntime", "lancedb", "torch"} & sys.modules.keys()
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_deadline_consumes_validation_and_both_stages(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
     from cognitive_castle.canonical_records import prepare_remember
@@ -82,6 +91,9 @@ def test_deadline_consumes_validation_and_both_stages(monkeypatch, tmp_path):
     assert deadlines == [5.0, 3.0]
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_infer_rejects_unissued_handoff_and_malformed_worker_vector(monkeypatch, tmp_path):
     import pytest
     from cognitive_castle import semantic_runtime as runtime
@@ -117,6 +129,9 @@ def test_infer_rejects_unissued_handoff_and_malformed_worker_vector(monkeypatch,
         }
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_success_arriving_after_absolute_deadline_is_unavailable(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
     from cognitive_castle.canonical_records import prepare_remember
@@ -146,6 +161,9 @@ def test_success_arriving_after_absolute_deadline_is_unavailable(monkeypatch, tm
         assert session.tokenize(sources) == {"status": "unavailable", "reason": "semantic_deadline"}
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_tokenizer_response_must_bind_requested_source_set(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
     from cognitive_castle.canonical_records import prepare_remember
@@ -174,6 +192,9 @@ def test_tokenizer_response_must_bind_requested_source_set(monkeypatch, tmp_path
         }
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_real_supervisor_preflight_cannot_extend_shared_session_deadline(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
     from cognitive_castle.canonical_records import prepare_remember
@@ -202,6 +223,9 @@ def test_real_supervisor_preflight_cannot_extend_shared_session_deadline(monkeyp
     assert checks == [{"deadline": 105.0}]
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_migration_source_queue_exact_share_one_deadline_and_fixed_caps(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime
     from test_migration_codec import descriptor
@@ -234,6 +258,9 @@ def test_migration_source_queue_exact_share_one_deadline_and_fixed_caps(monkeypa
     assert all(c[1]["background_preempt"] for c in calls)
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_source_response_validation_cannot_escape_absolute_deadline(monkeypatch, tmp_path):
     from cognitive_castle import semantic_runtime as runtime, sqlite_source_runtime as source
     from cognitive_castle import migration_codec as codec

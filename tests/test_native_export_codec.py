@@ -152,6 +152,9 @@ def test_native_registration_uses_separate_domain_and_strict_source_cursor():
         "system_memory_pressure",
     ],
 )
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_native_session_refusal_uses_history_profile_and_original_cursor(monkeypatch, reason):
     import os
     from cognitive_castle import memory_runtime

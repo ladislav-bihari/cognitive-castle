@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,8 +89,9 @@ def test_coverage_and_import_guards_use_complementary_fresh_processes(tmp_path):
     assert strict[strict.index("-k") + 1] == "test_guard"
 
 
+@pytest.mark.parametrize("guard_style", ["direct", "helper"])
 def test_real_coverage_retains_every_case_once_and_does_not_pollute_import_guard(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, guard_style
 ):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -96,9 +99,17 @@ def test_real_coverage_retains_every_case_once_and_does_not_pollute_import_guard
     package = tmp_path / "cognitive_castle"
     package.mkdir()
     (package / "__init__.py").write_text("VALUE = 42\n")
+    guard = (
+        "def test_guard():\n    assert 'sqlite3' not in sys.modules\n"
+        if guard_style == "direct"
+        else "def helper():\n    assert 'sqlite3' not in __import__('sys').modules\n"
+        "def delegate():\n    helper()\n"
+        "def test_guard():\n    delegate()\n"
+    )
     (tests / "test_memory_mixed.py").write_text(
-        "import sys,os\ndef test_guard():\n    assert 'sqlite3' not in sys.modules\n"
-        "    assert not any(k.startswith('COV_CORE_') for k in os.environ)\n"
+        "import sys,os\n"
+        + guard
+        + "    assert not any(k.startswith('COV_CORE_') for k in os.environ)\n"
         "def test_measured():\n    import cognitive_castle\n    assert cognitive_castle.VALUE == 42\n"
     )
     monkeypatch.setenv("COV_CORE_SOURCE", "must not reach child Python startup")
@@ -110,6 +121,12 @@ def test_real_coverage_retains_every_case_once_and_does_not_pollute_import_guard
         names.extend(node.get("name") for node in root.findall(".//testcase"))
     assert sorted(names) == ["test_guard", "test_measured"]
     assert (tmp_path / ".coverage").read_bytes().startswith(b"SQLite format 3")
+    import json
+
+    outcomes = json.loads((tmp_path / "ci-test-results/bounded/outcomes.json").read_text())
+    for outcome in outcomes:
+        command = outcome["command"]
+        assert not Path(command[command.index("--basetemp") + 1]).is_relative_to(tmp_path)
 
 
 def test_an_empty_file_is_not_hidden_by_an_unrelated_passing_file(tmp_path):

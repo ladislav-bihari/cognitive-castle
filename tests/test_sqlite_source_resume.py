@@ -323,6 +323,9 @@ def test_invalid_resume_refuses_before_progress(bad):
         ("dual", "history"),
     ],
 )
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires supported macOS supervisor admission"
+)
 def test_native_corrupt_skipped_prefix_refuses_without_advancing(tmp_path, mode, phase):
     from test_sqlite_source_export import fixture, invoke
     from cognitive_castle.sqlite_export_codec import source_binding

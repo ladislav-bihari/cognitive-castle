@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 
 PREFIXES = (
@@ -50,21 +51,28 @@ def partition(paths):
 
 def import_guards(path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    return sorted(
-        {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("test_")
-            and any(
-                isinstance(child, ast.Attribute)
-                and child.attr == "modules"
-                and isinstance(child.value, ast.Name)
-                and child.value.id == "sys"
-                for child in ast.walk(node)
-            )
-        }
-    )
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    # Include dynamic sys imports and local helper chains conservatively.
+    guarded = {
+        name
+        for name, node in functions.items()
+        if any(
+            isinstance(child, ast.Attribute) and child.attr == "modules" for child in ast.walk(node)
+        )
+    }
+    references = {
+        name: {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+        for name, node in functions.items()
+    }
+    while True:
+        expanded = guarded | {name for name, names in references.items() if names & guarded}
+        if expanded == guarded:
+            return sorted(name for name in guarded if name.startswith("test_"))
+        guarded = expanded
 
 
 def commands(paths, group, *, coverage=True):
@@ -116,6 +124,13 @@ def run(root, group, *, coverage=True):
         os.chdir(old_cwd)
     results = root / "ci-test-results" / group
     results.mkdir(parents=True, exist_ok=False)
+    scratch = (
+        Path(tempfile.mkdtemp(prefix="castle-ci-bounded-", dir=os.environ.get("RUNNER_TEMP")))
+        if group == "bounded"
+        else None
+    )
+    if scratch is not None and scratch.resolve().is_relative_to(root):
+        raise ValueError("private CI scratch must be outside the repository")
     outcomes = []
     for index, command in enumerate(selected):
         phase = results / str(index)
@@ -131,10 +146,12 @@ def run(root, group, *, coverage=True):
         }
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         if group == "bounded":
-            home = phase / "home"
+            private = scratch / str(index)
+            private.mkdir(mode=0o700)
+            home = private / "home"
             home.mkdir(mode=0o700)
             env.update(HOME=str(home), USERPROFILE=str(home))
-            command += ["--basetemp", str(phase / "pytest")]
+            command += ["--basetemp", str(private / "pytest")]
         command += ["--junitxml", str(phase / "result.xml")]
         print(json.dumps({"phase": index, "command": command}), flush=True)
         result = subprocess.run(command, cwd=root, env=env)
