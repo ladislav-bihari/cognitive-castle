@@ -21,6 +21,7 @@ from .sqlite_export_codec import (
 
 FORMAT = "sqlite-migration-v1"
 NATIVE_FORMAT = "native-migration-v1"
+LIVE_FORMAT = "direct-live-registration-v1"
 MAX_METADATA = 192 * 1024
 PROOF_VERSION = "bulk-v1-identical-replay"
 OWNER_FIELDS = {
@@ -56,9 +57,16 @@ def bounded(value):
 
 
 def registration(descriptor, destination):
+    from . import live_publication_codec as live
+
     is_native = isinstance(descriptor, dict) and descriptor.get("format") == native.FORMAT
-    binding = native.source_binding(descriptor) if is_native else source_binding(descriptor)
-    domain = NATIVE_FORMAT if is_native else FORMAT
+    is_live = isinstance(descriptor, dict) and descriptor.get("format") == live.REGISTRATION_SOURCE
+    if is_live:
+        binding = live.validate_source_descriptor(descriptor)["source_binding"]
+        domain = LIVE_FORMAT
+    else:
+        binding = native.source_binding(descriptor) if is_native else source_binding(descriptor)
+        domain = NATIVE_FORMAT if is_native else FORMAT
     if (
         not isinstance(destination, str)
         or not PurePosixPath(destination).is_absolute()
@@ -74,7 +82,11 @@ def registration(descriptor, destination):
         descriptor=descriptor,
         destination=destination,
     )
-    result["job_id"] = hashed([domain, "job", result])
+    result["job_id"] = (
+        hashed([domain, "job", destination, descriptor["namespace"], descriptor["key"]])
+        if is_live
+        else hashed([domain, "job", result])
+    )
     return bounded(result)
 
 
@@ -94,6 +106,10 @@ def validate_registration(value):
 
 
 def cursor(value, reg):
+    if reg["format"] == LIVE_FORMAT:
+        from .live_publication_codec import validate_cursor as live_cursor
+
+        return live_cursor(value, reg["descriptor"])
     if reg["format"] == NATIVE_FORMAT:
         return native.validate_cursor(
             value,
@@ -105,6 +121,10 @@ def cursor(value, reg):
 
 
 def initial_source_cursor(reg):
+    if reg["format"] == LIVE_FORMAT:
+        from .live_publication_codec import initial_cursor as live_cursor
+
+        return live_cursor(reg["descriptor"])
     if reg["format"] == NATIVE_FORMAT:
         return native.initial_cursor(
             reg["source_binding"], reg["descriptor"]["store_id"], reg["descriptor"]["start_cursor"]
@@ -213,6 +233,19 @@ def validate_owner_reference(value, reg):
         raise ValueError("live receipt references")
     for identity in ids:
         bulk.identity(identity, "memory")
+    if reg["format"] == LIVE_FORMAT:
+        descriptor = reg["descriptor"]
+        receipt = descriptor["receipt"]
+        if (
+            phase != "live"
+            or value["owner"] != descriptor["owner"]
+            or value["manifest_hash"] != descriptor["manifest_hash"]
+            or ids != receipt["ids"]
+            or value["members"] != len(ids)
+            or value["text_hash"] != receipt["text_sha256"]
+            or value["text_bytes"] != receipt["stored_text_bytes"]
+        ):
+            raise ValueError("direct live owner commitments")
     return value
 
 
