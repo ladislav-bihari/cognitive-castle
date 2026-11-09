@@ -38,6 +38,8 @@ EXTRA = {
     "test_cancellable_pressure_probe.py",
     "test_pressure_policy_integration.py",
     "test_unified_routes.py",
+    "test_live_publication_codec.py",
+    "test_live_registration.py",
 }
 
 
