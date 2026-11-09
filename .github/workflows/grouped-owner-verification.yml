@@ -1,0 +1,42 @@
+name: Versioned prefix and original storage contracts
+on:
+  push:
+    branches: [verify/develop-ci-isolation-final-20261109]
+permissions:
+  contents: read
+jobs:
+  ci_isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12.11"
+      - run: python -m pip install pytest==9.0.3 psutil==7.2.2 pytest-cov==5.0.0
+      - run: python .github/scripts/verify_ci_isolation.py prepare
+      - shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_ci_isolation.py candidate > ci-ci_isolation-results/candidate.log 2>&1
+          CASTLE_GREEN_RC=$?
+          set -e
+          cat ci-ci_isolation-results/candidate.log
+          python .github/scripts/verify_ci_isolation.py verify-candidate "$CASTLE_GREEN_RC"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: ci_isolation
+          path: |
+            ci-ci_isolation-results/*.json
+            ci-ci_isolation-results/*.xml
+            ci-ci_isolation-results/*.log
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
