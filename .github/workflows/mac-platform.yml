@@ -1,0 +1,65 @@
+name: Integrated supported macOS qualification
+on:
+  push:
+    branches: [verify/develop-mac-platform-20261109]
+permissions:
+  contents: read
+concurrency:
+  group: bounded-layout-native-verification
+  cancel-in-progress: false
+jobs:
+  platform:
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12.10"
+      - run: python -m pip install pytest==9.0.3 psutil==7.2.2
+      - name: Freeze scope
+        id: freeze
+        run: python .github/scripts/verify_mac_platform.py prepare
+      - name: Verify platform scope
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_mac_platform.py run platform > ci-mac-platform-results/platform/output.log 2>&1
+          CASTLE_TEST_RC=$?
+          set -e
+          cat ci-mac-platform-results/platform/output.log
+          python .github/scripts/verify_mac_platform.py verify platform "$CASTLE_TEST_RC"
+      - name: Verify sqlite scope
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_mac_platform.py run sqlite > ci-mac-platform-results/sqlite/output.log 2>&1
+          CASTLE_TEST_RC=$?
+          set -e
+          cat ci-mac-platform-results/sqlite/output.log
+          python .github/scripts/verify_mac_platform.py verify sqlite "$CASTLE_TEST_RC"
+      - name: Verify lifecycle scope
+        shell: bash
+        run: |
+          set +e
+          python .github/scripts/verify_mac_platform.py run lifecycle > ci-mac-platform-results/lifecycle/output.log 2>&1
+          CASTLE_TEST_RC=$?
+          set -e
+          cat ci-mac-platform-results/lifecycle/output.log
+          python .github/scripts/verify_mac_platform.py verify lifecycle "$CASTLE_TEST_RC"
+      - name: Retain complete synthetic evidence
+        if: always() && steps.freeze.outcome == 'success'
+        run: python .github/scripts/verify_mac_platform.py archive
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always() && steps.freeze.outcome == 'success'
+        with:
+          name: mac-platform-evidence
+          path: mac-platform-evidence.tar
+          if-no-files-found: error
+          retention-days: 7
