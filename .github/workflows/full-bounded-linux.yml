@@ -1,0 +1,41 @@
+name: Integrated bounded Linux suite
+on:
+  push:
+    branches: [verify/develop-bounded-linux-20261109]
+permissions:
+  contents: read
+jobs:
+  bounded-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12.11"
+      - name: Verify source-only parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "010e130e2b88a3b132991372d50f3438b7026e50"
+          python -c "import subprocess; paths=subprocess.check_output(['git','diff','--name-only','HEAD^','HEAD'],text=True).splitlines(); assert all(p.startswith('.github/workflows/') for p in paths)"
+          mkdir ci-qualified-bounded-linux
+      - name: Install ordinary project dev dependencies
+        shell: bash
+        run: python -m pip install -e ".[dev]" 2>&1 | tee ci-qualified-bounded-linux/install.log
+      - name: Run every bounded test file in isolated processes
+        shell: bash
+        run: python scripts/run_ci_tests.py bounded 2>&1 | tee ci-qualified-bounded-linux/tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: full-bounded-linux
+          path: |
+            ci-qualified-bounded-linux/*.log
+            ci-test-results/bounded/outcomes.json
+            ci-test-results/bounded/**/result.xml
+          if-no-files-found: error
+          retention-days: 7
