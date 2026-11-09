@@ -30,16 +30,17 @@
 
 Files: memory_runtime.py, brain_reader_guardian.py; three conflicted pressure/priority test files; new test_pressure_policy_integration.py.
 
-- [ ] Freeze both merge sides and enumerate all unique tests.
-- [ ] Observe RED on original feature code for current develop warning admission and strict late-sample rejection, with AST-only tests.
-- [ ] Resolve policy to1/2 admitted on time,4/unknown refused; retain absolute deadlines and foreground priority. Preserve upstream native tests and feature-specific deadline cases.
+- [x] Freeze both merge sides and enumerate all unique tests.
+- [x] Observe RED on original feature code for current develop warning admission and strict late-sample rejection, with AST-only tests.
+- [x] Resolve policy to1/2 admitted on time,4/unknown refused; retain absolute deadlines and foreground priority. Preserve upstream native tests and feature-specific deadline cases.
 - [ ] Run relevant pure pressure/preemption/resource tests, then fixed native lifecycle checks remotely. Record actual failures without weakening safeguards.
 
 ### Task2: Repair formatting and investigate branch failures
 
 Files: tests/lance_owner_stream_fixture.py, tests/test_lance_owner_stream.py; validation report and this ledger.
 
-- [ ] Format only reported files with project-pinned Ruff; check the full source/test/script format and lint scope.
+- [x] Format only reported files with project-pinned Ruff; check the full source/test/script format and lint scope.
 - [ ] Obtain or locate the266-failure report, classify actual failures by code path and environment, and reproduce a representative failure within approved bounds. Never rerun an uncontrolled full native suite locally.
 - [ ] Verify integrated capture journal/semantic contracts and affected upstream tests in isolated processes.
+- [ ] Repair the independently reproduced CI isolation defect: run bounded memory test files in fresh processes without global legacy fixtures, keep the remaining suite and coverage gate, and prove the partition neither drops nor duplicates files. Keep production guards unchanged. This does not close the missing266-failure report.
 - [ ] Commit the integration only when conflicts are resolved and relevant checks pass. Publish exact outstanding gates; resume the registered foreground writer with the full objective unchanged.
