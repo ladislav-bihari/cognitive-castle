@@ -76,7 +76,26 @@ macOS-only marks to 15 parametrized functions, preload the actual host psutil
 backend before unit simulation, initialize the existing MCP stdout restoration,
 extend import-guard selection through helper references, and keep private test
 scratch outside the repository. Function-body AST comparison confirms all 15
-platform-marked tests retain their original bodies. Corrected runs remain pending.
+platform-marked tests retain their original bodies.
+[Corrected run 42658066213](https://github.com/ladislav-bihari/cognitive-castle/actions/runs/42658066213)
+uses frozen source `66fdb6fcbde898fceb915517e8ea685cefeb9e5b`, an eight-case CI
+runner proof and the same complete 97-file Linux scope. It passed: 1,438 passed,
+320 conditionally skipped, zero failures/errors across 1,758 cases. XML and the
+97-file command inventory were independently audited. The eight harness cases
+also passed at 80.2 MiB sampled aggregate RSS / 3.1 seconds. These harness metrics
+do not measure peak RSS of the entire 97-file run. The 23 newly platform-marked
+cases require separate supported macOS evidence, not a Linux success claim.
+
+[Run 42658834315](https://github.com/ladislav-bihari/cognitive-castle/actions/runs/42658834315)
+is the consolidated macOS qualification of this same frozen source: 18 supervisor
+contracts, five real SQLite source-resume cases (ten intended fixture/export
+workers), and the five still-unexecuted process-lifecycle cases. Each phase has
+its own unchanged 20-second/256-MiB test harness. macOS 15 arm64 / Python 3.12.10
+is required; no platform substitution, models or installed palace. Full synthetic
+evidence is retained without following symlinks, bounded to 64 MiB / 8,192 entries.
+This qualification also ended without acquiring a hosted runner, with the same
+explicit capacity annotation. None of its 28 cases executed. All three hosted
+capacity failures remain infrastructure evidence, not a successful native result.
 
 The macOS lifecycle attempt 2 also acquired no hosted runner and ended with the
 same capacity annotation. Neither attempt executed a test. No immediate third
@@ -91,6 +110,9 @@ retry or platform/limit substitution was made; the lifecycle gate remains open.
   integration, configured semantic quality, full-corpus reconciliation/capacity,
   independent review, operator cutover and installed Codex/Claude verification.
 - Do not enable Claude GitHub workflows or upgrade pylance as part of this work.
+- Restore and prove successful fresh capture; the installed live store currently
+  refuses new writes at its storage quota. Do not equate working recall with
+  healthy capture or complete recent coverage.
 
 ## Current installed storage inventory (metadata only)
 
@@ -112,3 +134,25 @@ semantic indexes, journals, temporary outputs and free headroom. Original files
 were neither modified nor removed. The bounded metadata observations are retained
 in this plan's `capacity-footprint-20261109.json` and
 `history-job-metadata-20261109.json` evidence files.
+
+## Live capture quota
+
+The active operator's `capture-last.json` reports `status=quota`, zero successful
+slices and one failed source. The main live SQLite file is 1,431,654,400 bytes.
+A metadata-only 100-byte header read confirms 4,096-byte pages, 349,525 committed
+pages and zero freelist pages. Stat identity/size/mtime did not change during that
+read. Installed `MemoryStore._connect` admits `4 GiB // (3 * page_size)` pages,
+reserving the rest for rollback journal and temporary work: exactly 349,525 pages.
+This establishes the current main-database storage boundary without opening a
+database connection or reading record bodies.
+
+Ordinary model-free recall through the installed Python BrainAPI still answered
+under the existing Codex policy, with explicit incomplete coverage. Narrow recall
+did not locate the original 266-failure report; returned numeric matches concerned
+other work and were not treated as that report. No new SUE root, hooks, provider,
+source grant, background backfill, disk/RAM budget increase or data deletion was
+performed. The quota remains an unresolved operational gate for the full goal.
+The write guard also governs capture metadata transactions in that same file:
+substituting a canonical body publisher alone cannot restore source/checkpoint
+writes there. The registered foreground path and independent body-free capture
+coordination therefore remain necessary integration work.
