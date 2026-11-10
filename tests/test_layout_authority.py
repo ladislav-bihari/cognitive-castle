@@ -42,6 +42,19 @@ def test_partition_protocol_private_registration_rejects_unpinned_policy_before_
     )
 
 
+def test_empty_authority_setup_rejects_unpinned_qualification_before_sql():
+    from cognitive_castle.lance_layout_directory import _prepare_layout_authority
+
+    _, _, qualification, envelope = qualification_case()
+
+    class NoSQL:
+        def execute(self, *args):
+            raise AssertionError("unqualified setup reached SQL")
+
+    with pytest.raises(ValueError):
+        _prepare_layout_authority(NoSQL(), envelope, qualification, expected_hash="b" * 64)
+
+
 def test_partition_protocol_claim_hit_never_becomes_global_absence(monkeypatch):
     from cognitive_castle.lance_layout_directory import _NativeLayoutDirectory
 
