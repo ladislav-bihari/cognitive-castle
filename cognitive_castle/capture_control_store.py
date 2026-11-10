@@ -236,6 +236,36 @@ class CaptureControlStore:
                 return None
             return codec.validate_checkpoint(json.loads(_string(row[0], 8192, "checkpoint")))
 
+    def status(self, *, after=0, limit=16):
+        """Page recorded metadata only; canonical counts belong to Lance authority."""
+        from .capture_control_codec import validate_operation
+
+        validate_operation("control_status", dict(after=after, limit=limit))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT sequence,substr(value,1,1025) AS value FROM coverage_observations WHERE sequence>? ORDER BY sequence LIMIT ?",
+                (after, limit + 1),
+            ).fetchall()
+            observations = []
+            for row in rows[:limit]:
+                try:
+                    observation = json.loads(_string(row["value"], 1024, "observation"))
+                    source = observation.pop("source_key")
+                    _sha(source)
+                    MemoryStore._observation(source, observation)
+                except (ValueError, KeyError, TypeError, RecursionError) as exc:
+                    raise _Corrupt("invalid coverage observation") from exc
+                candidate = dict(sequence=row["sequence"], source_key=source, **observation)
+                if len(_json(observations + [candidate]).encode()) > 12000:
+                    break
+                observations.append(candidate)
+            return dict(
+                status="ok",
+                observations=observations,
+                next_after=observations[-1]["sequence"] if len(rows) > len(observations) else None,
+                observation_currentness="recorded_only_source_not_reopened",
+            )
+
     def save_checkpoint(self, source_key, checkpoint, *, observations=None):
         _sha(source_key)
         checkpoint = codec.validate_checkpoint(checkpoint)

@@ -31,7 +31,7 @@ _FIELDS = {
     "queue_register": ({"batch_key", "references", "profile", "input_binding", "lane"}, set()),
     "queue_select": (set(), set()),
     "queue_acknowledge": ({"batch_key", "receipt"}, set()),
-    "queue_status": (set(), set()),
+    "queue_status": (set(), {"envelope_hash"}),
     "queue_retry": ({"batch_key"}, {"refused"}),
     "vector_publish": ({"batch_key", "references", "page", "inference"}, set()),
     "vector_layout_publish": ({"batch_key", "references", "page", "inference"}, {"envelope_hash"}),

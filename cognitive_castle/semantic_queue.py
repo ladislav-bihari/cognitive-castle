@@ -422,8 +422,31 @@ class SemanticQueue:
 
         return self._run(True, retry)
 
-    def status(self):
+    def status(self, *, envelope_hash=None):
+        if envelope_hash is not None:
+            validate_hash(envelope_hash)
+
         def status(conn):
+            registered = None
+            if envelope_hash is not None:
+                from .lance_layout_directory import _NativeLayoutDirectory
+
+                authority = _NativeLayoutDirectory(conn)
+                if digest(authority.envelope) != envelope_hash:
+                    return {"status": "conflict"}
+                confirmed = conn.execute(
+                    "SELECT count(*) FROM layout_claims WHERE state='confirmed' AND id GLOB 'memory:*'"
+                ).fetchone()[0]
+                pending = conn.execute(
+                    "SELECT count(*) FROM layout_claims WHERE state='reserved'"
+                ).fetchone()[0]
+                registered = dict(
+                    envelope_hash=envelope_hash,
+                    confirmed_records=confirmed,
+                    pending_claims=pending,
+                    count_basis="registered_claims",
+                    native_rows_rechecked=False,
+                )
             counts = {name: 0 for name in ("pending", "inflight", "complete", "refused")}
             for row in conn.execute("SELECT state,count(*) AS n FROM groups GROUP BY state"):
                 counts[row["state"]] = row["n"]
@@ -446,6 +469,7 @@ class SemanticQueue:
                 ],
                 "positions_truncated": sum(counts.values()) > len(rows),
                 "coverage_complete": False,
+                **({"registered": registered} if registered is not None else {}),
             }
 
         return self._run(False, status)

@@ -10,13 +10,14 @@ FIELDS = {
     "source_queue": ({"path", "allowed_root", "format"}, {"workspace"}),
     "source_page": (set(), {"after", "limit", "pending_only"}),
     "coverage": (set(), set()),
+    "control_status": (set(), {"after", "limit"}),
     "discover_sources": ({"allowed_root", "format"}, {"max_entries"}),
     "discovery_status": (set(), set()),
     "source_prepare": ({"source_key"}, {"publication"}),
     "recovery_select": ({"source_key"}, set()),
     "recovery_apply": ({"page", "proofs"}, set()),
 }
-READS = {"source_page", "coverage", "recovery_select", "discovery_status"}
+READS = {"source_page", "coverage", "recovery_select", "discovery_status", "control_status"}
 
 
 def validate_publication(value):
@@ -71,6 +72,14 @@ def validate_operation(operation, args):
             or not 1 <= args.get("max_entries", 16) <= 64
         ):
             raise ValueError("capture discovery bounds")
+    elif operation == "control_status":
+        if (
+            type(args.get("after", 0)) is not int
+            or not 0 <= args.get("after", 0) <= 2**63 - 1
+            or type(args.get("limit", 16)) is not int
+            or not 1 <= args.get("limit", 16) <= 16
+        ):
+            raise ValueError("capture status bounds")
     elif operation == "source_page":
         if args.get("after", "") != "":
             _sha(args["after"])

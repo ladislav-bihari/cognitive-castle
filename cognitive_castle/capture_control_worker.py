@@ -21,6 +21,8 @@ def _execute(request):
     store = _store(request)
     operation, args = request["operation"], request["arguments"]
     try:
+        if operation == "control_status":
+            return store.status(**args)
         if operation == "source_prepare":
             from cognitive_castle.capture_control import prepare_source
 

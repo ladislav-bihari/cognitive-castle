@@ -159,7 +159,7 @@ def test_selected_marker_disappearing_after_read_does_not_authorize_legacy_retur
     assert made[0].closed
 
 
-@pytest.mark.parametrize("operation", ["recall", "restore_context", "status"])
+@pytest.mark.parametrize("operation", ["recall", "restore_context", "update_context"])
 def test_selected_unsupported_route_never_creates_lease_or_uses_old_backend(
     monkeypatch, tmp_path, operation
 ):

@@ -23,6 +23,7 @@ SUPPORTED = {
     "capture_one",
     "discover_sources",
     "discovery_status",
+    "status",
 }
 
 
@@ -35,6 +36,72 @@ def _current(palace, selected):
         return load_selection(palace) == selected
     except SelectionUnavailable:
         return False
+
+
+def _status(session, control, generation, selected, arguments):
+    """Compose recorded metadata; this does not qualify corpus/native health."""
+    from .capture_control_codec import validate_operation
+
+    arguments = validate_operation("control_status", arguments)
+    page = control.call("control_status", arguments)
+    if page.get("status") != "ok":
+        return page
+    ready = session._ready()
+    if ready is not None:
+        return ready
+    pin = layout_hash(selected)
+    queued = session.store(generation, "queue_status", dict(envelope_hash=pin))
+    if queued.get("status") != "ok":
+        return queued
+    registered = queued.get("registered")
+    if (
+        not isinstance(registered, dict)
+        or registered.keys()
+        != {
+            "envelope_hash",
+            "confirmed_records",
+            "pending_claims",
+            "count_basis",
+            "native_rows_rechecked",
+        }
+        or registered["envelope_hash"] != pin
+        or registered["count_basis"] != "registered_claims"
+        or registered["native_rows_rechecked"] is not False
+        or any(
+            type(registered[k]) is not int or not 0 <= registered[k] < 2**63
+            for k in ("confirmed_records", "pending_claims")
+        )
+    ):
+        return dict(status="unavailable", reason="selected_status_contract")
+    ready = session._ready()
+    if ready is not None:
+        return ready
+    captured = control.call("coverage", {})
+    if captured.get("status") != "ok":
+        return captured
+    return dict(
+        page,
+        indexed_chunks=registered["confirmed_records"],
+        canonical=registered,
+        generation=pin,
+        storage_format=selected["envelope"]["format"],
+        capture=captured,
+        semantic=dict(
+            counts=queued["counts"],
+            groups=queued["groups"][:8],
+            positions_truncated=queued["positions_truncated"] or len(queued["groups"]) > 8,
+            coverage_complete=False,
+        ),
+        coverage="indexed_only",
+        coverage_detail=dict(
+            complete=False,
+            limitations=[
+                "canonical_corpus_reconciliation_pending",
+                "semantic_coverage_unqualified",
+                "historical_capture_metadata_pending",
+            ],
+        ),
+    )
 
 
 def _perform(session, selected, operation, arguments):
@@ -57,6 +124,8 @@ def _perform(session, selected, operation, arguments):
     control = CaptureControlClient(
         session, selected["control_authority"], expected_hash=selected["control_hash"]
     )
+    if operation == "status":
+        return _status(session, control, generation, selected, arguments)
     if operation == "capture_one":
         from .capture_live_coordinator import advance
 
