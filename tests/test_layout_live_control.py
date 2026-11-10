@@ -15,12 +15,17 @@ from test_partitioned_exact_store import qualification_case
 
 
 @pytest.fixture
-def control(tmp_path, monkeypatch):
+def control(tmp_path, monkeypatch, request):
     root = tmp_path.resolve() / "generation"
     root.mkdir(mode=0o700)
     for path in ("coordination", "exact", "exact/tmp", "exact/partitions"):
         (root / path).mkdir(mode=0o700)
-    _, _, qualification, envelope = qualification_case()
+    if getattr(request, "param", None) == "native-policy":
+        from test_layout_native_integration import _qualification
+
+        qualification, envelope = _qualification(root)
+    else:
+        _, _, qualification, envelope = qualification_case()
     for pid in range(envelope["max_partitions"]):
         (root / "exact/partitions" / str(pid)).mkdir(mode=0o700)
     info = root.stat()
@@ -46,6 +51,86 @@ def prepare(control):
         return directory._prepare_layout_authority(
             conn, envelope, qualification, expected_hash=envelope["qualification_hash"]
         )
+
+
+@pytest.mark.parametrize("control", ["native-policy"], indirect=True)
+@pytest.mark.parametrize("legacy_charge", [False, True])
+def test_serialized_live_owners_share_workspace_but_keep_retained_capacity(control, legacy_charge):
+    import json
+
+    from cognitive_castle import lance_layout_codec as layout
+    from cognitive_castle.live_publication import source_result
+
+    store, qualification, envelope = control
+    prepare(control)
+
+    def bind(job_id, plan):
+        # Exercise numeric reservations in real transactions. Native owner
+        # completion/receipts are deliberately outside this control-only test.
+        return store._run(
+            True, lambda conn: directory.LayoutDirectory(conn).bind(job_id, [plan], envelope)
+        )
+
+    bindings = []
+    for index in range(11):
+        canonical = prepare_remember(str(index), "original fact", namespace="capacity-proof")
+        publication = live.prepare_publication(
+            canonical,
+            [
+                dict(workspace="/project", wing="project", room="conversation")
+                for _ in canonical.records
+            ],
+        )
+        opened = store.live_open(publication.intent, migration.hashed(envelope))
+        assert opened["status"] == "ok"
+        reg = opened["registration"]
+        window = dict(
+            format=layout.SOURCE_REQUEST,
+            action="plan",
+            generation=envelope["generation"],
+            qualification_hash=envelope["qualification_hash"],
+            allowed_plan_hashes=[],
+            packing=layout.PACKING,
+        )
+        plan = source_result(
+            publication, reg, migration.initial_source_cursor(reg), window, qualification
+        )["plans"][0]
+        # Fixed policy: 4 MiB working space, 6 MiB retained data per owner.
+        assert plan["expansion"]["temp_bytes"] == 4 * 1024**2
+        assert plan["expansion"]["retained_bytes"] == 6 * 1024**2
+        bound = bind(reg["job_id"], plan)
+        if index == 10:
+            assert bound == {"status": "conflict"}
+        else:
+            assert bound["status"] == "ok", (index, bound)
+            assert bound["targets"][0]["partition_id"] == index // 5
+            bindings.append((reg["job_id"], plan, bound))
+            if index == 0 and legacy_charge:
+                # Simulate an existing conservative reservation; new owners
+                # cannot silently reclaim its prior high-water mark.
+                with store._connection(True) as conn:
+                    row = conn.execute(
+                        "SELECT reservation FROM layout_partitions WHERE partition_id=0"
+                    ).fetchone()
+                    reservation = json.loads(row["reservation"])
+                    reservation["temp_bytes"] = 8 * 1024**2
+                    conn.execute(
+                        "UPDATE layout_partitions SET reservation=? WHERE partition_id=0",
+                        (json.dumps(reservation),),
+                    )
+    with store._connection(False) as conn:
+        rows = conn.execute(
+            "SELECT partition_id,reservation FROM layout_partitions ORDER BY partition_id"
+        ).fetchall()
+        assert len(rows) == 2
+        for row in rows:
+            reservation = json.loads(row["reservation"])
+            expected = 8 if legacy_charge and row["partition_id"] == 0 else 4
+            assert reservation["temp_bytes"] == expected * 1024**2
+            assert reservation["retained_bytes"] == 30 * 1024**2
+        assert conn.execute("SELECT count(*) FROM layout_homes").fetchone()[0] == 10
+    for job_id, plan, bound in bindings:
+        assert bind(job_id, plan) == bound
 
 
 def test_operator_can_prepare_registered_authority_with_no_source_jobs(control):

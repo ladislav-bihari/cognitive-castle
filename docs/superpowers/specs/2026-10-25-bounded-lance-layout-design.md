@@ -68,6 +68,17 @@ planning facts from their existing streaming summaries; no planning bodies
 are stored in SQLite. Do not assume deduplication savings before verifying
 the original canonical rows.
 
+`temp_bytes` reserves the peak working space of the serialized worker, so
+placement takes the maximum working reservation across owners in a partition.
+It does not add a permanently retained workspace for every owner. All other
+expansion counters remain cumulative, and an existing higher temporary
+reservation is never reduced. This accounting does not forgive retained spill:
+before and after every native operation the facade measures all actual files
+under the generation's temporary directory and charges their logical/allocated
+high-water size plus the qualified working reserve against the unchanged
+temporary ceiling. Temporary artifact counts, privacy, free-disk and global
+single-flight admission checks remain required.
+
 All new rows for that owner stay in its home partition. A large owner may use
 many bounded batches and a dedicated qualified partition. Roll over between
 owners, never during a batch or midway through an admitted owner. An invalid
