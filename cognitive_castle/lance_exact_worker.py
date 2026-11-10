@@ -67,6 +67,10 @@ class _ForbiddenImports(importlib.abc.MetaPathFinder):
 
 
 def _install_guards():
+    # The namespace SDK uses Pydantic, but this fixed offline worker has no
+    # third-party validator extension point. Keep normal validation and avoid
+    # installed entry-point discovery/execution during every cold Lance import.
+    os.environ["PYDANTIC_DISABLE_PLUGINS"] = "__all__"
     sys.meta_path.insert(0, _ForbiddenImports())
 
     def audit(event, args):

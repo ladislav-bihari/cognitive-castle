@@ -85,6 +85,9 @@ class _ForbiddenImports(importlib.abc.MetaPathFinder):
 
 
 def _install_guards(phase):
+    # Fixed queue/vector operations never load third-party validator plugins.
+    # Pydantic's ordinary schema validation remains enabled.
+    os.environ["PYDANTIC_DISABLE_PLUGINS"] = "__all__"
     sys.meta_path.insert(0, _ForbiddenImports(phase))
 
     def audit(event, args):
