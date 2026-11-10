@@ -428,6 +428,8 @@ def _capture_source(palace, source, result, run):
     value = run("capture_one", dict(key=source["source_key"]))
     if value["status"] == "ok":
         result["successful_slices"] += 1
+    elif value["status"] == "in_progress":
+        result["pending_slices"] += 1
     else:
         result["failed_sources"] += 1
     return value
@@ -455,6 +457,10 @@ def _fresh_slice(palace, directory, state, result, run, local):
         return None
     value = _capture_source(palace, page["sources"][0], result, run)
     local["attempted"].add(key)
+    if value["status"] == "in_progress":
+        # Native publication yielded at a durable boundary. Keep the fresh
+        # priority and rotation; the unchanged clock/attempt limits bound work.
+        return None
     if value["status"] != "ok":
         local["fresh_waiting"].add(key)
         if value.get("reason") == "source_unavailable":
@@ -498,7 +504,7 @@ def _ordinary_slice(palace, state, result, run, local):
         return None
     value = _capture_source(palace, source, result, run)
     local["attempted"].add(source["source_key"])
-    if value["status"] != "ok" and value.get("reason") != "source_unavailable":
+    if value["status"] not in {"ok", "in_progress"} and value.get("reason") != "source_unavailable":
         return value
     return None
 
@@ -536,6 +542,7 @@ def _tick(palace, *, max_seconds=5, discover=True):
         status="ok",
         queued_sources=0,
         successful_slices=0,
+        pending_slices=0,
         failed_sources=0,
         spool_errors=0,
         unauthorized_sources=0,
