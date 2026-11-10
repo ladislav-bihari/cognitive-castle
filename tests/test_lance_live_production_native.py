@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
     or platform.mac_ver()[0] != "26.6.2"
     or platform.python_version() != "3.12.11"
     or re.fullmatch(
-        r"[a-f0-9]{64}", os.environ.get("CASTLE_DIRECT_NATIVE_QUALIFICATION_SOURCE", "")
+        r"[a-f0-9]{40}", os.environ.get("CASTLE_DIRECT_NATIVE_QUALIFICATION_SOURCE", "")
     )
     is None,
     reason="requires frozen production qualification grant and exact Mac26.6.2/arm64/Python3.12.11 tuple",
