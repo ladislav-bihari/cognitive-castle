@@ -37,6 +37,10 @@ _FIELDS = {
     "vector_layout_publish": ({"batch_key", "references", "page", "inference"}, {"envelope_hash"}),
     "vector_receipt": ({"batch_key", "start_window"}, set()),
     "vector_layout_receipt": ({"batch_key", "start_window"}, {"envelope_hash"}),
+    "vector_layout_prepare": (
+        {"batch_key", "references", "input_binding", "start_window"},
+        {"envelope_hash"},
+    ),
     "vector_nearest": (
         {"vector", "profile", "generation", "scope", "allowed_source_hashes", "limit"},
         {"allowed_exposure_hashes"},
@@ -157,7 +161,7 @@ def _execute(request):
     else:
         from cognitive_castle.lance_vector_store import LanceVectorStore
 
-        if method in {"layout_publish", "layout_receipt"}:
+        if method in {"layout_publish", "layout_receipt", "layout_prepare"}:
             method = method.removeprefix("layout_")
             arguments = dict(arguments)
             bound = {}

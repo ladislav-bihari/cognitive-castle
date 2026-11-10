@@ -325,6 +325,7 @@ class SemanticSession:
             "queue_layout_routes",
             "vector_receipt",
             "vector_layout_receipt",
+            "vector_layout_prepare",
             "vector_nearest",
         }
         return self._run_stage(
@@ -388,7 +389,7 @@ class LayoutSemanticSession(SemanticSession):
         self._directory(directory, self.generation)
         if operation in {"vector_publish", "vector_receipt"}:
             operation = operation.replace("vector_", "vector_layout_", 1)
-        if operation in {"vector_layout_publish", "vector_layout_receipt"}:
+        if operation in {"vector_layout_publish", "vector_layout_receipt", "vector_layout_prepare"}:
             if self.envelope_hash is not None:
                 arguments = dict(arguments, envelope_hash=self.envelope_hash)
         return super().store(directory, operation, arguments)
