@@ -325,6 +325,7 @@ def _recovery_ack(source):
         if (
             type(ack["revision"]) is not int
             or not 1 <= ack["revision"] < 2**63
+            or type(source.get("publication_recovery_revision")) is not int
             or source.get("publication_recovery_revision") != ack["revision"]
         ):
             raise ValueError("recovery ack revision")
