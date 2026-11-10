@@ -10,7 +10,7 @@ from test_semantic_indexer import _publication
 from test_semantic_queue import receipt
 
 
-def case(fault=None, *, committed=False):
+def case(fault=None, *, committed=False, deferred=False, publish_refused=False):
     from cognitive_castle.semantic_indexer import index_one
 
     args, source = _publication()
@@ -61,6 +61,7 @@ def case(fault=None, *, committed=False):
 
     class Session:
         resources = []
+        _defer_vector_verification = deferred
 
         def prepare_index(self, directory):
             events.append("control_prepare")
@@ -86,7 +87,11 @@ def case(fault=None, *, committed=False):
             assert operation not in {"queue_intents", "queue_select"}, "duplicate control start"
             events.append(operation)
             if operation == "vector_publish":
-                return dict(status="ok")
+                return (
+                    dict(status="unavailable", reason="worker_deadline")
+                    if publish_refused
+                    else dict(status="ok")
+                )
             if operation == "vector_receipt":
                 assert "vector_publish" in events, "cold proof must follow actual publication"
                 return proof
@@ -94,6 +99,30 @@ def case(fault=None, *, committed=False):
             return dict(status="ok", state="complete")
 
     return index_one(Session(), Path("/generation")), events
+
+
+def test_background_publication_yields_before_cold_verification_without_ack():
+    result, events = case(deferred=True)
+    assert result["status"] == "in_progress" and result["state"] == "verification_pending"
+    assert result["position"] == 0 and "receipt_id" not in result
+    assert events == ["control_prepare", "native_prepare", "tokenize", "infer", "vector_publish"]
+
+
+def test_background_next_tick_requires_actual_receipt_without_model_work():
+    result, events = case(committed=True, deferred=True)
+    assert (
+        result["status"] == "ok"
+        and result["state"] == "complete"
+        and result["recovered_vector"] is True
+    )
+    assert events == ["control_prepare", "native_prepare", "queue_acknowledge"]
+
+
+def test_background_unconfirmed_write_reports_refusal_without_ack_or_larger_retry():
+    result, events = case(deferred=True, publish_refused=True)
+    assert result["status"] == "unavailable" and result["reason"] == "worker_deadline"
+    assert result["phase"] == "publish" and "queue_acknowledge" not in events
+    assert events == ["control_prepare", "native_prepare", "tokenize", "infer", "vector_publish"]
 
 
 @pytest.mark.parametrize("committed", [False, True])

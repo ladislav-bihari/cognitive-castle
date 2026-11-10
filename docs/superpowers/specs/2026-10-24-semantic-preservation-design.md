@@ -154,6 +154,16 @@ model startup, candidate collection, optional configured ranking stages and exac
 hydration. No stage may restart that total deadline or overlap another model
 worker to evade the aggregate budget. A refusal does not authorize a larger retry.
 
+Background publication follows the resumable contract above. A bounded tick may
+end after a vector append and leave verification pending; a subsequent separately
+admitted tick must obtain the actual cold receipt before advancing the queue.
+No model work repeats for a verified committed page. Each tick retains its own
+fixed budget, and interactive queries cannot restart their total deadline.
+Completing a fresh background page in one tick was an additional assistant test
+assumption, not a requirement of this design. Preserve its failed measurements
+as supplementary benchmarks. Full publication lag and the interactive query
+criteria below still require measurement; a pending tick proves neither.
+
 Measure separately, in disposable supervised processes:
 
 - Pinned vector schema and declared identity, without a model or vector-value scan.

@@ -152,7 +152,7 @@ class ExactPublication(SemanticSession):
 
 
 def index_one(session, directory):
-    """One fair queue page. A verified committed page never needs re-inference."""
+    """One bounded indexing step; committed pages recover without re-inference."""
     selected = None
     prepare = getattr(session, "prepare_index", None)
     if prepare is None:
@@ -277,6 +277,20 @@ def index_one(session, directory):
         # time. Once spent, the next tick handles it; there is no cleanup budget.
         if published.get("status") not in {"ok", "unavailable"}:
             return failed(published, "publish")
+        if getattr(session, "_defer_vector_verification", False) is True:
+            if published.get("status") != "ok":
+                return failed(published, "publish")
+            # Background publication is resumable across separate admitted
+            # ticks. A fresh append never substitutes for the next tick's cold
+            # proof, and no semantic offset is acknowledged here.
+            return {
+                **base,
+                "status": "in_progress",
+                "state": "verification_pending",
+                "phase": "receipt_verification",
+                "recovered_vector": False,
+                "resources": session.resources,
+            }
         receipt = session.store(
             directory,
             "vector_receipt",

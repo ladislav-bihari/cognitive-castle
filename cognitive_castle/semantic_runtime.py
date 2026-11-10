@@ -352,6 +352,8 @@ class LayoutSemanticSession(SemanticSession):
     session does not register, migrate or activate a production generation.
     """
 
+    _defer_vector_verification = True
+
     def __init__(
         self, trusted_profile: Path, generation: Path, *, interactive=True, envelope_hash=None
     ):
