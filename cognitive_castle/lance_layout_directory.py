@@ -128,6 +128,17 @@ def _ids(ids):
     migration.bounded(ids)
 
 
+def _reservation_total(usage, expansion):
+    # Workers share one serialized temporary workspace. Retained spill is
+    # separately charged from actual files before/after native I/O; it is not
+    # another permanent workspace for every owner. Preserve older high-water
+    # reservations and sum every counter for retained data/index/artifact debt.
+    return {
+        k: max(usage[k], expansion[k]) if k == "temp_bytes" else usage[k] + expansion[k]
+        for k in codec.EXPANSION
+    }
+
+
 class LayoutDirectory:
     def __init__(self, conn):
         self.conn = conn
@@ -392,7 +403,7 @@ class LayoutDirectory:
                 if stop_partition is not None:
                     break
                 _conflict()
-            total = {k: usage[k] + plan["expansion"][k] for k in codec.EXPANSION}
+            total = _reservation_total(usage, plan["expansion"])
             if any(total[k] > envelope["limits"][k] for k in codec.EXPANSION):
                 partition += 1
                 total = dict(plan["expansion"])
@@ -1583,7 +1594,7 @@ class _NativeLayoutDirectory(LayoutDirectory):
         return super()._target(state, intent)
 
     def _prefix_target(self, state, intent):
-        """Validate all original homes and their summed reservation; no writes.
+        """Validate original homes, retained debt and shared workspace; no writes.
 
         A valid packed codec alone never grants queue authority.
         """
@@ -1641,7 +1652,7 @@ class _NativeLayoutDirectory(LayoutDirectory):
             if span is None or any(type(v) is not int for v in span) or tuple(span) != placeholder:
                 raise _StoreError("unavailable")
             plans.append(plan)
-            total = {k: total[k] + plan["expansion"][k] for k in codec.EXPANSION}
+            total = _reservation_total(total, plan["expansion"])
         if target != codec.target(envelope, pid, plans):
             _conflict()
         reservation = codec._expansion(self._partition(pid, envelope))
