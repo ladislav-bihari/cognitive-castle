@@ -3,6 +3,10 @@
 These tests verify orchestration and confirmation, never native Lance admission.
 """
 
+import json
+from pathlib import Path
+import subprocess
+import sys
 import pytest
 from cognitive_castle import live_publication
 from cognitive_castle.fast_memory import MemoryStore
@@ -125,3 +129,55 @@ def test_unscoped_source_is_pending_without_inventing_workspace_or_publishing(
     result = run(control, key)
     assert result == dict(status="in_progress", reason="capture_scope_unresolved")
     assert store.load_checkpoint(key)["offset"] == 0
+
+
+def test_source_rewrite_during_publication_cannot_confirm_changed_words(tmp_path, monkeypatch):
+    store, authority, path, key, _ = source_case(tmp_path)
+    control = Control(authority)
+    publisher_fixture(tmp_path, monkeypatch, control)
+    publish = live_publication.publish
+
+    def rewrite(*args):
+        receipt = publish(*args)
+        record = json.loads(path.read_bytes())
+        record["payload"]["content"][0]["text"] = "replacement source words"
+        path.write_bytes(json.dumps(record).encode() + b"\n")
+        return receipt
+
+    monkeypatch.setattr(live_publication, "publish", rewrite)
+    result = run(control, key)
+    assert result.get("publication_consumed") is not True
+    checkpoint = store.load_checkpoint(key)
+    assert checkpoint["offset"] == 0 and checkpoint["generation"] == 1
+    with store._connect() as conn:
+        assert conn.execute("SELECT count(*) FROM capture_verified_chunks").fetchone()[0] == 0
+
+
+def test_lost_confirmation_response_retries_without_publishing_again(tmp_path, monkeypatch):
+    store, authority, path, key, _ = source_case(tmp_path)
+    control = Control(authority)
+    _, publications = publisher_fixture(tmp_path, monkeypatch, control)
+    original = control.call
+
+    def lose_response(operation, arguments):
+        result = original(operation, arguments)
+        if "publication" in arguments:
+            assert result["publication_consumed"] is True
+            return dict(status="unavailable", reason="test_lost_response")
+        return result
+
+    control.call = lose_response
+    assert run(control, key) == dict(status="unavailable", reason="test_lost_response")
+    assert store.load_checkpoint(key)["offset"] == path.stat().st_size
+    control.call = original
+    assert run(control, key)["status"] == "ok"
+    assert len(publications) == 1
+
+
+def test_coordinator_import_keeps_host_free_of_storage_and_model_engines():
+    root = Path(__file__).resolve().parents[1]
+    code = f"import sys;sys.path.insert(0,{str(root)!r});import cognitive_castle.capture_live_coordinator;assert not {{'sqlite3','lance','lancedb','pyarrow','numpy','torch'}}.intersection(sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=3
+    )
+    assert result.returncode == 0, result.stderr
