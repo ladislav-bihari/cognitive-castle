@@ -18,7 +18,7 @@
 - No unregistered flat-store fallback, implicit schema upgrade, source-descriptor fabrication or ordinary-query migration/index build.
 - Trusted operator selects generation/qualification. Input scope labels grant no permission; exposure/source hashes and policy revision must still be checked.
 - Frozen integration source `66fdb6f` remains separate. Do not commit unqualified new work in its merge, install or activate it.
-- Local tests are pure, after normal pressure admission, under the 20-second/256-MiB safe runner. Native proof remains on the supported isolated platform.
+- Local tests normally remain pure, after normal pressure admission, under the 20-second/256-MiB safe runner. The original fixed macOS15 native gate remains separate. Additional qualification of the actual production tuple may use a frozen isolated checkout, explicit source grant, private synthetic fixtures, pressure1 and the same unchanged resource/deadline guards; it cannot stand in for the macOS15 result or access the installed palace/models.
 
 ## Review Focus
 

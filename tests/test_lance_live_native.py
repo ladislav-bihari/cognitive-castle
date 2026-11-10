@@ -137,7 +137,7 @@ def _assert_source(generation, publication):
     )
 
 
-def test_direct_native_publication_reopens_and_refuses_changed_request(tmp_path):
+def _case_publication_reopens_and_refuses_changed_request(tmp_path):
     from cognitive_castle import live_publication_codec as codec
     from cognitive_castle.canonical_records import prepare_remember
 
@@ -173,7 +173,7 @@ def test_direct_native_publication_reopens_and_refuses_changed_request(tmp_path)
     _assert_source(generation, publication)
 
 
-def test_direct_native_lost_append_response_resumes_exact_pending_batch(tmp_path):
+def _case_lost_append_response_resumes_exact_pending_batch(tmp_path):
     generation, publication, binding = _setup_live(tmp_path)
     lost, before = _attempt(generation, publication, binding, loss="layout_import_batch:1")
     assert lost["status"] == "unavailable" and lost["reason"] == "fixture_lost_response", lost
@@ -187,3 +187,11 @@ def test_direct_native_lost_append_response_resumes_exact_pending_batch(tmp_path
     receipt, _ = _attempt(generation, publication, binding, complete=True)
     assert receipt == publication.canonical.receipt
     _assert_source(generation, publication)
+
+
+def test_direct_native_publication_reopens_and_refuses_changed_request(tmp_path):
+    _case_publication_reopens_and_refuses_changed_request(tmp_path)
+
+
+def test_direct_native_lost_append_response_resumes_exact_pending_batch(tmp_path):
+    _case_lost_append_response_resumes_exact_pending_batch(tmp_path)
