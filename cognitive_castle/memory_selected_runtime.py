@@ -38,6 +38,10 @@ def _current(palace, selected):
 def _perform(session, selected, operation, arguments):
     generation = Path(selected["envelope"]["generation"]["path"])
     if operation in {"read_sources", "page"}:
+        if operation == "page":
+            arguments = dict(arguments)
+            if arguments.pop("field", "text") != "text":
+                return dict(status="unavailable", reason="canonical_route_not_ready")
         return session.exact(
             generation,
             "layout_read",
