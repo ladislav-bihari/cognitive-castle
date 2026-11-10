@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
-import time
 
 # Live sidecar budget; SQLite pages may use a third (the rest covers journal/temp).
 # 1 GiB filled within a week of ordinary capture, stopping all new writes.
@@ -112,77 +111,32 @@ class MemoryStore:
 
     @contextmanager
     def _connect(self, write=False):
-        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "getuid"):
-            raise _Unavailable("privacy primitives unavailable")
-        # Do not resolve paths: every existing ancestor must reject symlinks.
-        for path in reversed([self.directory, *self.directory.parents]):
-            if path.is_symlink():
-                raise _Unavailable("symlink ancestor")
-        # Historical admission must precede creation and SQLite hot-journal
-        # recovery. Read-only connections never reserve or expand capacity.
-        budget = self._write_budget() if write else None
-        if not self.directory.exists():
-            if not write:
-                raise _Missing("not initialized")
-            self.directory.mkdir(mode=0o700)
-        self._private(self.directory, True)
-        for name in [DB_NAME, DB_NAME + "-journal", DB_NAME + "-wal", DB_NAME + "-shm"]:
-            path = self.directory / name
-            if path.exists() or path.is_symlink():
-                self._private(path)
-        if write and sum(p.stat().st_size for p in self.directory.iterdir()) >= budget:
-            raise _Quota()
-        if not self.db_path.exists():
-            if not write:
-                raise _Missing("not initialized")
-            fd = os.open(self.db_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            os.close(fd)
-        conn = sqlite3.connect(
-            self.db_path.as_uri() + ("?mode=rw" if write else "?mode=ro"), uri=True, timeout=0.05
-        )
-        conn.row_factory = sqlite3.Row
-        deadline = time.monotonic() + (3 if write else 2)
-        conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
-        try:
-            conn.execute("PRAGMA cache_size=-4096")
-            conn.execute("PRAGMA mmap_size=0")
-            conn.execute("PRAGMA temp_store=FILE")
-            if write:
-                if conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0].lower() != "delete":
-                    raise _Unavailable("rollback journal unavailable")
-                # Reserve room for rollback journal and disk-backed temporary work.
-                # This deliberately admits less data than the total sidecar budget.
-                page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-                max_pages = max(1, budget // (3 * page_size))
-                if conn.execute(f"PRAGMA max_page_count={max_pages}").fetchone()[0] > max_pages:
-                    raise _Quota()
-                conn.execute("BEGIN IMMEDIATE")
-                new_chunks = (
-                    conn.execute("SELECT 1 FROM sqlite_master WHERE name='chunks'").fetchone()
-                    is None
-                )
-                for sql in [
-                    "CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, text TEXT NOT NULL, provenance TEXT NOT NULL, text_hash TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL)",
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS lexical USING fts5(id UNINDEXED, text)",
-                    "CREATE TABLE IF NOT EXISTS receipts (namespace TEXT, request_id TEXT, digest TEXT, ids TEXT, PRIMARY KEY(namespace, request_id))",
-                    "CREATE TABLE IF NOT EXISTS checkpoints (source_key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-                    "CREATE TABLE IF NOT EXISTS coverage_observations (sequence INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT UNIQUE NOT NULL, value TEXT NOT NULL)",
-                    "CREATE INDEX IF NOT EXISTS chunk_source_scope ON chunks(CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.source') END,CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.generation') END,CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.role') END)",
-                ]:
-                    conn.execute(sql)
-                if new_chunks:
-                    # Only index a table created empty in this transaction.
-                    # Existing stores require the explicit bounded upgrade.
-                    from .unified_memory import workspace_index_specs
+        from .private_sqlite import private_connection
 
-                    for spec in workspace_index_specs():
-                        if spec["table"] == "chunks":
-                            conn.execute(spec["sql"])
+        with private_connection(self, write) as conn:
             yield conn
-            if write:
-                conn.commit()
-        finally:
-            conn.close()
+
+    def _initialize_schema(self, conn):
+        new_chunks = (
+            conn.execute("SELECT 1 FROM sqlite_master WHERE name='chunks'").fetchone() is None
+        )
+        for sql in [
+            "CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, text TEXT NOT NULL, provenance TEXT NOT NULL, text_hash TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL)",
+            "CREATE VIRTUAL TABLE IF NOT EXISTS lexical USING fts5(id UNINDEXED, text)",
+            "CREATE TABLE IF NOT EXISTS receipts (namespace TEXT, request_id TEXT, digest TEXT, ids TEXT, PRIMARY KEY(namespace, request_id))",
+            "CREATE TABLE IF NOT EXISTS checkpoints (source_key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS coverage_observations (sequence INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT UNIQUE NOT NULL, value TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS chunk_source_scope ON chunks(CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.source') END,CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.generation') END,CASE WHEN json_valid(provenance) THEN json_extract(provenance,'$.role') END)",
+        ]:
+            conn.execute(sql)
+        if new_chunks:
+            # Only index a table created empty in this transaction.
+            # Existing stores require the explicit bounded upgrade.
+            from .unified_memory import workspace_index_specs
+
+            for spec in workspace_index_specs():
+                if spec["table"] == "chunks":
+                    conn.execute(spec["sql"])
 
     @staticmethod
     def _error(exc):
