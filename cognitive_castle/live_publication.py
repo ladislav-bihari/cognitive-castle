@@ -162,6 +162,7 @@ def publish(session, generation, publication, envelope_hash):
         dict(
             operation="receipt",
             arguments=dict(namespace=canonical.namespace, key=canonical.request_id),
+            envelope_hash=envelope_hash,
         ),
     )
     if not isinstance(observed, dict) or observed.get("status") != "ok":

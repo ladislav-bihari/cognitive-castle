@@ -107,6 +107,36 @@ def test_modified_preparation_is_refused_before_registering_outbox():
         api().publish(Ready(), Path("/generation"), prepared, "a" * 64)
 
 
+def test_final_receipt_read_is_bound_to_original_selected_authority(monkeypatch):
+    prepared, _, reg, _ = source_case()
+    terminal = {**migration.initial_source_cursor(reg), "phase": "done"}
+
+    def finished(*args):
+        return dict(
+            status="ok",
+            job_id=reg["job_id"],
+            staging_cursor=terminal,
+            completed_frontier=terminal,
+            counts=migration.empty_counts(),
+            state="snapshot_export_exhausted",
+        )
+
+    monkeypatch.setattr(api(), "step", finished)
+
+    class Ready:
+        def _ready(self):
+            return None
+
+        def exact(self, generation, operation, arguments):
+            assert operation == "layout_read" and arguments["operation"] == "receipt"
+            assert arguments["envelope_hash"] == "a" * 64
+            return dict(status="unavailable", reason="native_fixture_not_run")
+
+    assert api().publish(Ready(), Path(reg["destination"]), prepared, "a" * 64) == dict(
+        status="unavailable", reason="native_fixture_not_run"
+    )
+
+
 def test_fresh_append_yields_without_claiming_proof_or_starting_another_worker(tmp_path):
     from cognitive_castle.canonical_records import _json
 
