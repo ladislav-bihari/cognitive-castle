@@ -258,3 +258,11 @@ def test_mixed_lane_intent_gets_new_priority_without_changing_original(control):
     assert store.intent_prepare(intent)["status"] == "ok"
     assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is True
     assert store.prepare_index(envelope_hash=pin)["intents"][0] == intent
+
+
+def test_schema6_rejects_unknown_objects_with_sqlite_like_names(control):
+    store, pin = setup(control)
+    assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is True
+    with store._connection(True) as conn:
+        conn.execute("CREATE TABLE sqliteXhidden(value TEXT)")
+    assert store.prepare_index(envelope_hash=pin)["status"] == "unavailable"

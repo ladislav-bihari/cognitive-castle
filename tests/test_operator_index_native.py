@@ -229,3 +229,68 @@ def test_operator_native_new_fact_paraphrase_and_originals_preserved(monkeypatch
         assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 2 * 1024**2
         assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
     _pure_host()
+
+
+def _prepare_schedule(monkeypatch):
+    from cognitive_castle import semantic_coordinator
+
+    root, value = _case()
+    _observe(monkeypatch)
+    started = time.monotonic()
+    result = semantic_coordinator.prepare_index_schedule(root / "operator-palace", diagnostic=True)
+    elapsed = time.monotonic() - started
+    print(
+        "REGISTERED_MODEL_OPERATION "
+        + json.dumps(
+            dict(operation="operator_schedule_prepare", seconds=elapsed, status=result["status"])
+        ),
+        flush=True,
+    )
+    assert elapsed <= 5, result
+    return root, value, result
+
+
+def test_operator_schedule_native_prepares_only_one_bounded_page(monkeypatch):
+    root, value, result = _prepare_schedule(monkeypatch)
+    assert result == dict(
+        status="in_progress",
+        format="castle-index-schedule-v1",
+        processed=8,
+        backfill_cursor=8,
+        ready=False,
+    )
+    assert _status(root, value)["counts"]["complete"] == 9
+    _pure_host()
+
+
+def test_operator_schedule_native_resumes_preparation_without_changing_receipts(monkeypatch):
+    root, value, result = _prepare_schedule(monkeypatch)
+    assert result == dict(
+        status="ok", format="castle-index-schedule-v1", processed=1, backfill_cursor=9, ready=True
+    )
+    assert _status(root, value)["counts"]["complete"] == 9
+    _pure_host()
+
+
+def test_operator_schedule_native_idle_preserves_all_canonical_sources(monkeypatch):
+    root, value, result = _tick(monkeypatch, forbid_model=True)
+    assert result["status"] == "idle", result
+    originals = [_fact(n).records[0].source() for n in range(8)]
+    with _session(value) as session:
+        first = session.exact(
+            root / "generation/exact", "read_sources", dict(ids=[s["id"] for s in originals])
+        )
+        second = session.exact(
+            root / "generation/exact",
+            "read_sources",
+            dict(ids=[_new_fact().records[0].source()["id"]]),
+        )
+    assert first == dict(status="ok", sources=originals)
+    assert second == dict(status="ok", sources=[_new_fact().records[0].source()])
+    assert _status(root, value)["counts"]["complete"] == 9
+    fragments = json.loads(Path(os.environ["CASTLE_OPERATOR_FRAGMENT_MANIFEST"]).read_text())
+    for relative, expected in fragments.items():
+        path = root / relative
+        assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 2 * 1024**2
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+    _pure_host()
