@@ -73,6 +73,15 @@ def test_absent_selection_does_not_create_storage(tmp_path):
     assert list(palace.iterdir()) == []
 
 
+def test_declared_lance_backend_with_missing_selection_cannot_fall_back(tmp_path):
+    palace, marker, value = fixture(tmp_path)
+    write(marker.with_name("canonical-backend.json"), dict(
+        format="castle-canonical-backend-v1", backend="lance", selection_hash=_hash(_json(value))))
+    marker.unlink()
+    with pytest.raises(api().SelectionUnavailable):
+        api().load_selection(palace)
+
+
 @pytest.mark.parametrize("kind", ["absent", "file"])
 def test_invalid_palace_cannot_be_reported_as_unconfigured_storage(tmp_path, kind):
     palace = tmp_path / "invalid-palace"
