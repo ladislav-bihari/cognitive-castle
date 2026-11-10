@@ -39,6 +39,17 @@ def test_partition_is_disjoint_exhaustive_and_keeps_legacy_backend_tests():
         "test_history_native.py",
         "test_live_publication_codec.py",
         "test_live_registration.py",
+        "test_registered_recovery.py",
+        "test_registered_model_native.py",
+        "test_index_native_prepare.py",
+        "test_index_control_prepare.py",
+        "test_index_preparation_coordinator.py",
+        "test_index_prepare_upgrade_native.py",
+        "test_index_background_native.py",
+        "test_exact_read_timing_native.py",
+        "test_worker_plugin_policy.py",
+        "test_selected_status.py",
+        "test_ci_test_partition.py",
     ):
         assert ROOT / "tests" / name in bounded
 

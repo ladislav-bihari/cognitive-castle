@@ -30,6 +30,8 @@ PREFIXES = (
     "test_sqlite_",
     "test_vector_",
     "test_bulk_",
+    "test_index_",
+    "test_registered_",
 )
 EXTRA = {
     "test_fast_memory.py",
@@ -40,6 +42,10 @@ EXTRA = {
     "test_unified_routes.py",
     "test_live_publication_codec.py",
     "test_live_registration.py",
+    "test_exact_read_timing_native.py",
+    "test_worker_plugin_policy.py",
+    "test_selected_status.py",
+    "test_ci_test_partition.py",
 }
 
 
