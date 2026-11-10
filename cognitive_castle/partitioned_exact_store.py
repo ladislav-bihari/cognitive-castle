@@ -31,6 +31,7 @@ from .canonical_records import _hash, _json, _string
 from .lance_exact_store import _StoreError
 
 _READ_FIELDS = {
+    "verify_intent": ({"intent"}, set()),
     "read_sources": ({"ids"}, set()),
     "page": ({"source_id"}, {"offset", "limit", "expected_hash"}),
     "receipt": ({"namespace", "key"}, set()),
@@ -257,6 +258,10 @@ class PartitionedExactStore:
         required, optional = _READ_FIELDS[operation]
         if not required <= arguments.keys() or arguments.keys() - required - optional:
             raise ValueError("layout read arguments")
+        if operation == "verify_intent":
+            from .semantic_intents import validate_intent
+
+            validate_intent(arguments["intent"])
         if context is not None:
             if (
                 operation not in {"bulk_owner", "receipt"}
@@ -281,6 +286,8 @@ class PartitionedExactStore:
         return self._run(read)
 
     def _read(self, authority, operation, arguments, identities, context):
+        if operation == "verify_intent":
+            return self._verify_intent(authority, arguments["intent"])
         if operation == "directory_page":
             return self._directory_page(authority, **arguments)
         if context is not None:
@@ -330,6 +337,39 @@ class PartitionedExactStore:
             return getattr(store, operation)(**arguments)
         finally:
             store.release_remote()
+
+    def _verify_intent(self, authority, intent):
+        """Actual receipt and all originals under one admitted authority read.
+
+        No queue mutation or expected/prepared receipt can establish this proof.
+        At most nine original chunks in two independently checked groups are
+        admitted by validate_intent before entering the authority transaction.
+        """
+        from .semantic_intents import hydrate_group
+        from .semantic_profile import digest
+
+        arguments = dict(namespace=intent["namespace"], key=intent["key"])
+        proof = self._read(authority, "receipt", arguments, _route_ids("receipt", arguments), None)
+        if proof.get("status") != "ok":
+            return proof
+        if proof["digest"] != intent["digest"] or proof["receipt"] != intent["receipt"]:
+            return {"status": "conflict"}
+        for group in intent["groups"]:
+            arguments = dict(ids=[ref["canonical_id"] for ref in group["references"]])
+            result = self._read(
+                authority, "read_sources", arguments, _route_ids("read_sources", arguments), None
+            )
+            if result.get("status") != "ok":
+                return result
+            verified = hydrate_group(group, result["sources"])
+            if verified["status"] != "ok":
+                return verified
+        return dict(
+            status="ok",
+            intent_binding=digest(intent),
+            digest=proof["digest"],
+            receipt=proof["receipt"],
+        )
 
     def layout_maintain(self, partition_id):
         bulk.integer(partition_id)

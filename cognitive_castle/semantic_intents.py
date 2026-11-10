@@ -11,6 +11,27 @@ def source_exposure_hash(source):
     return digest({key: source[key] for key in ("id", "text", "provenance")})
 
 
+def hydrate_group(group, sources):
+    """Check actual originals against every full-source reference and binding."""
+    validate_references(group["references"])
+    if group["profile"] != PROFILE_ID:
+        return {"status": "stale"}
+    if not isinstance(sources, list) or len(sources) != len(group["references"]):
+        return {"status": "stale"}
+    envelopes = []
+    for source, ref in zip(sources, group["references"], strict=True):
+        if (
+            source["id"] != ref["canonical_id"]
+            or source["provenance"]["text_hash"] != ref["source_hash"]
+            or source_exposure_hash(source) != ref["exposure_hash"]
+        ):
+            return {"status": "stale"}
+        envelopes.append({"source": source, "expected_hash": ref["source_hash"]})
+    if input_binding(envelopes) != group["input_binding"]:
+        return {"status": "stale"}
+    return {"status": "ok", "sources": envelopes}
+
+
 def prepare_intent(prepared, scopes, lane):
     if not isinstance(scopes, list) or len(scopes) != len(prepared.records):
         raise ValueError("one trusted scope per canonical record")

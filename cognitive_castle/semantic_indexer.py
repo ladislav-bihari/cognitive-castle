@@ -8,11 +8,11 @@ from pathlib import Path
 import time
 
 from .canonical_records import prepare_remember
-from .semantic_intents import prepare_intent, validate_intent, source_exposure_hash
+from .semantic_intents import prepare_intent, validate_intent, source_exposure_hash, hydrate_group
 from .semantic_profile import PROFILE_ID, digest
 from .semantic_queue import validate_receipt, validate_references
 from .semantic_runtime import SemanticSession
-from .semantic_windows import input_binding, validate_page
+from .semantic_windows import validate_page
 
 
 def _hydrate(session, directory, group):
@@ -26,25 +26,28 @@ def _hydrate(session, directory, group):
     )
     if result.get("status") != "ok":
         return result
-    sources = result["sources"]
-    if len(sources) != len(group["references"]):
-        return {"status": "stale"}
-    envelopes = []
-    for source, ref in zip(sources, group["references"]):
-        if (
-            source["id"] != ref["canonical_id"]
-            or source["provenance"]["text_hash"] != ref["source_hash"]
-            or source_exposure_hash(source) != ref["exposure_hash"]
-        ):
-            return {"status": "stale"}
-        envelopes.append({"source": source, "expected_hash": ref["source_hash"]})
-    if input_binding(envelopes) != group["input_binding"]:
-        return {"status": "stale"}
-    return {"status": "ok", "sources": envelopes}
+    return hydrate_group(group, result["sources"])
 
 
 def _recover_intent(session, directory, intent):
     validate_intent(intent)
+    verifier = getattr(session, "verify_intent", None)
+    if verifier is not None:
+        proof = verifier(directory, intent)
+        if proof.get("status") != "ok":
+            return proof
+        if (
+            set(proof) != {"status", "intent_binding", "digest", "receipt"}
+            or proof["intent_binding"] != digest(intent)
+            or proof["digest"] != intent["digest"]
+            or proof["receipt"] != intent["receipt"]
+        ):
+            return {"status": "conflict"}
+        return session.store(
+            directory,
+            "queue_intent_complete",
+            {"intent_id": intent["intent_id"], "binding": digest(intent)},
+        )
     proof = session.exact(
         Path(directory) / "exact",
         "receipt",

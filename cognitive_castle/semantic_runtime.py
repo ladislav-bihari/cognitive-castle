@@ -371,7 +371,7 @@ class LayoutSemanticSession(SemanticSession):
 
     def exact(self, directory, operation, arguments):
         self._directory(directory, self.generation / "exact")
-        if operation not in {"read_sources", "receipt", "page"}:
+        if operation not in {"read_sources", "receipt", "page", "verify_intent"}:
             raise ValueError("registered exact read operation")
         bound = {} if self.envelope_hash is None else dict(envelope_hash=self.envelope_hash)
         return super().exact(
@@ -379,6 +379,10 @@ class LayoutSemanticSession(SemanticSession):
             "layout_read",
             dict(operation=operation, arguments=arguments, **bound),
         )
+
+    def verify_intent(self, directory, intent):
+        self._directory(directory, self.generation)
+        return self.exact(self.generation / "exact", "verify_intent", dict(intent=intent))
 
     def store(self, directory, operation, arguments):
         self._directory(directory, self.generation)
