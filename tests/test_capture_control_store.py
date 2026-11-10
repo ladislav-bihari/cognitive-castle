@@ -52,6 +52,8 @@ def test_control_operator_creates_only_private_metadata_and_reopens(tmp_path):
         "capture_generation_scopes",
         "capture_chunk_scopes",
         "capture_publication_intents",
+        "capture_verified_chunks",
+        "capture_count_baselines",
     }
     assert not any(
         hasattr(store, name) for name in ("remember", "receipt", "recall", "read_sources")
@@ -198,3 +200,17 @@ def test_control_recovers_its_actual_hot_journal_under_existing_authority(tmp_pa
     store.save_checkpoint("b" * 64, checkpoint())
     assert store.load_checkpoint("a" * 64) == original
     assert store.load_checkpoint("b" * 64) == original
+
+
+@pytest.mark.parametrize("invalid", ["long", "unicode"])
+def test_control_operator_validates_path_before_any_creation(tmp_path, monkeypatch, invalid):
+    from pathlib import Path
+
+    path = tmp_path / ("x" * 2100 if invalid == "long" else "\ud800")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("invalid authority path reached directory creation")
+
+    monkeypatch.setattr(Path, "mkdir", forbidden)
+    with pytest.raises(ValueError):
+        api().initialize_capture_control(path, max_bytes=3 * 1024**2)

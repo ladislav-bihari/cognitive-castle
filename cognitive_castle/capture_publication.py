@@ -126,6 +126,10 @@ def _core(prepared, source_key):
 
 
 def _apply(conn, identity, intent):
+    from .capture_control_counts import is_control, record_confirmed
+
+    if is_control(conn):
+        record_confirmed(conn, intent)
     if intent["map"]:
         for chunk in intent["receipt"]["ids"]:
             values = (

@@ -49,8 +49,19 @@ _COLUMNS = {
         ("value", "TEXT"),
         ("state", "TEXT"),
     ],
+    "capture_verified_chunks": [
+        ("chunk_id", "TEXT"),
+        ("source_key", "TEXT"),
+        ("generation", "INTEGER"),
+    ],
+    "capture_count_baselines": [
+        ("source_key", "TEXT"),
+        ("generation", "INTEGER"),
+        ("state", "TEXT"),
+    ],
 }
 _INDEXES = {
+    "capture_verified_source",
     "capture_source_state",
     "capture_source_workspace",
     "capture_chunk_workspace",
@@ -170,6 +181,15 @@ class CaptureControlStore:
             )
             _ensure(conn)
             conn.execute(
+                "CREATE TABLE capture_verified_chunks (chunk_id TEXT PRIMARY KEY,source_key TEXT NOT NULL,generation INTEGER NOT NULL)"
+            )
+            conn.execute(
+                "CREATE INDEX capture_verified_source ON capture_verified_chunks(source_key,generation)"
+            )
+            conn.execute(
+                "CREATE TABLE capture_count_baselines (source_key TEXT,generation INTEGER,state TEXT NOT NULL,PRIMARY KEY(source_key,generation))"
+            )
+            conn.execute(
                 "CREATE TABLE capture_control_authority (id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL)"
             )
             conn.execute(
@@ -198,13 +218,25 @@ class CaptureControlStore:
 
     def save_checkpoint(self, source_key, checkpoint, *, observations=None):
         _sha(source_key)
-        raw = _json(codec.validate_checkpoint(checkpoint))
+        checkpoint = codec.validate_checkpoint(checkpoint)
+        raw = _json(checkpoint)
         if observations is not None and (
             not isinstance(observations, list) or len(observations) > 8
         ):
             raise ValueError("observations")
         encoded = [MemoryStore._observation(source_key, value) for value in observations or []]
         with self._connect(True) as conn:
+            from .capture_control_counts import initialize_baseline
+
+            old = conn.execute(
+                "SELECT substr(value,1,8193) FROM checkpoints WHERE source_key=?", (source_key,)
+            ).fetchone()
+            previous = (
+                None
+                if old is None
+                else codec.validate_checkpoint(json.loads(_string(old[0], 8192, "checkpoint")))
+            )
+            initialize_baseline(conn, source_key, checkpoint, previous)
             for observation in encoded:
                 conn.execute(
                     "INSERT OR IGNORE INTO coverage_observations(identity,value) VALUES (?,?)",
@@ -221,6 +253,7 @@ def initialize_capture_control(directory, *, max_bytes):
     if type(max_bytes) is not int or not codec.MIN_BYTES <= max_bytes <= codec.MAX_BYTES:
         raise ValueError("control operator budget")
     directory = Path(directory)
+    codec._path(str(directory), canonical=True)
     if not directory.is_absolute() or ".." in directory.parts:
         raise ValueError("control operator directory")
     for path in (directory, *directory.parents):

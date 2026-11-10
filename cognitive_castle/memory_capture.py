@@ -193,6 +193,10 @@ def _scope_chunks(conn, key, checkpoint, attempt):
     """Summarize scope; only explicit legacy attempts use their old watermark."""
     generation = checkpoint["generation"]
     scope = _generation_scope(conn, key, checkpoint, attempt)
+    from .capture_control_counts import is_control, summary
+
+    if is_control(conn):
+        return summary(conn, key, checkpoint, attempt, scope)
     workspace, attribution, state = scope["workspace"], scope["attribution"], scope["state"]
     metadata_start = scope["metadata_start"]
     where = " WHERE " + _CHUNK_SOURCE + "=? AND " + _CHUNK_GENERATION + "=?"
@@ -333,7 +337,10 @@ def capture_one(store, key):
                 current.pop("scope_attempt", None)
                 current["publication_pending"] = publication.pending(conn)
                 result["publication_pending"] = current["publication_pending"]
-                if current["publication_pending"]:
+                if (
+                    current["publication_pending"]
+                    or current.get("scope_accounting_complete") is False
+                ):
                     current["state"] = "pending"
             else:
                 current.update(state="failed", last_error=result.get("reason", result["status"]))
@@ -355,14 +362,23 @@ def source_page(store, *, after="", limit=8, pending_only=False):
                 return {"status": "ok", "sources": [], "next_after": None}
             from .capture_publication import pending_publications
 
-            where = " AND state IN ('pending','failed')" if pending_only else ""
-            if (
-                pending_only
-                and conn.execute(
+            from .capture_control_counts import is_control
+
+            control = is_control(conn)
+            where = ""
+            if pending_only:
+                conditions = ["state IN ('pending','failed')"]
+                if conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE name='capture_publication_intents'"
-                ).fetchone()
-            ):
-                where = " AND (state IN ('pending','failed') OR EXISTS (SELECT 1 FROM capture_publication_intents p WHERE p.source_key=capture_sources.source_key AND p.state IS NOT 'applied'))"
+                ).fetchone():
+                    conditions.append(
+                        "EXISTS (SELECT 1 FROM capture_publication_intents p WHERE p.source_key=capture_sources.source_key AND p.state IS NOT 'applied')"
+                    )
+                if control:
+                    conditions.append(
+                        "json_type(value,'$.scope_accounting_complete') IS NOT 'true'"
+                    )
+                where = " AND (" + " OR ".join(conditions) + ")"
             rows = conn.execute(
                 f"SELECT source_key,state,substr(value,1,16385) AS value FROM capture_sources WHERE source_key>?{where} ORDER BY source_key LIMIT ?",
                 (after, limit + 1),
@@ -371,7 +387,11 @@ def source_page(store, *, after="", limit=8, pending_only=False):
             for row in rows[:limit]:
                 value = _decode(row)
                 value["publication_pending"] = pending_publications(conn, value["source_key"])
-                if value["publication_pending"] and value["state"] == "caught_up":
+                if value["state"] == "caught_up" and (
+                    value["publication_pending"]
+                    or control
+                    and value.get("scope_accounting_complete") is not True
+                ):
                     value["state"] = "pending"
                 if len(_json(sources + [value]).encode()) > 12000:
                     if not sources:
@@ -423,11 +443,18 @@ def coverage(store):
         with store._connect() as conn:
             if not _exists(conn):
                 return result
+            from .capture_control_counts import is_control
+
+            control = is_control(conn)
+            if control:
+                result["scope_accounting_incomplete_sources"] = 0
             # Aggregate in SQLite without constructing an unbounded Python source list.
             sql = ",".join(
                 f"COALESCE(SUM(json_extract(value,'$.{path}')),0) AS {key}"
                 for key, path in metrics.items()
             )
+            if control:
+                sql += ",COALESCE(SUM(json_type(value,'$.scope_accounting_complete') IS NOT 'true'),0) AS scope_accounting_incomplete_sources"
             row = conn.execute(
                 "SELECT count(*) AS observed_sources, "
                 "COALESCE(SUM(state='pending'),0) AS pending_sources, "
@@ -443,6 +470,10 @@ def coverage(store):
             from .capture_publication import pending_publications
 
             result["publication_pending"] = pending_publications(conn)
+            if control:
+                result["known_unscoped_chunks"] = result["unscoped_chunks"]
+                if result["scope_accounting_incomplete_sources"]:
+                    result["unscoped_chunks"] = None
             result["omitted"] = {key: row[key] for key in OMISSIONS}
             result["excluded"] = {key: row[key] for key in EXCLUSIONS}
             if result["observed_sources"]:
@@ -452,6 +483,7 @@ def coverage(store):
                     or result["publication_pending"]
                     or result["failed_sources"]
                     or result["accounting_incomplete_sources"]
+                    or result.get("scope_accounting_incomplete_sources", 0)
                     else "gaps"
                     if any(result["omitted"].values())
                     else "complete_supported_text_at_last_observation"
