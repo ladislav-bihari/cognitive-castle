@@ -128,29 +128,30 @@ def publish(session, generation, publication, envelope_hash):
     ready = session._ready()
     if ready is not None:
         return ready
-    frames = _packet(publication)
+    _packet(publication)
     generation = Path(generation)
     registration = migration.registration(
         codec.source_descriptor(publication.intent), str(generation)
     )
-    for _ in range(frames + 1):  # Actual physical frames plus a separate EOF proof.
-        result = step(session, generation, publication, envelope_hash)
-        if not isinstance(result, dict) or result.get("status") != "ok":
-            return result if isinstance(result, dict) else {"status": "unavailable"}
-        try:
-            if result["job_id"] != registration["job_id"]:
-                raise ValueError("direct publication job")
-            migration.cursor(result["staging_cursor"], registration)
-            migration.cursor(result["completed_frontier"], registration)
-            migration.counts(result["counts"])
-            state = result["state"]
-            if state not in {"active", "snapshot_export_exhausted"}:
-                raise ValueError("direct publication progression")
-        except (ValueError, KeyError, TypeError):
-            return {"status": "unavailable", "reason": "direct_publication_progress"}
-        if state == "snapshot_export_exhausted":
-            break
-    else:
+    # One durable interval per caller lease. Starting another cold replay after
+    # an ACK can consume the remainder of a three-second capture slice before
+    # that next worker finishes. The registered frontier resumes on a later
+    # invocation; no prepared/ACKed interval substitutes for the final receipt.
+    result = step(session, generation, publication, envelope_hash)
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return result if isinstance(result, dict) else {"status": "unavailable"}
+    try:
+        if result["job_id"] != registration["job_id"]:
+            raise ValueError("direct publication job")
+        migration.cursor(result["staging_cursor"], registration)
+        migration.cursor(result["completed_frontier"], registration)
+        migration.counts(result["counts"])
+        state = result["state"]
+        if state not in {"active", "snapshot_export_exhausted"}:
+            raise ValueError("direct publication progression")
+    except (ValueError, KeyError, TypeError):
+        return {"status": "unavailable", "reason": "direct_publication_progress"}
+    if state != "snapshot_export_exhausted":
         return {"status": "in_progress", "reason": "direct_publication_intervals"}
     ready = session._ready()
     if ready is not None:

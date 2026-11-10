@@ -137,6 +137,51 @@ def test_final_receipt_read_is_bound_to_original_selected_authority(monkeypatch)
     )
 
 
+def test_verified_interval_yields_before_next_interval_and_later_reads_actual_receipt(monkeypatch):
+    prepared, _, reg, _ = source_case()
+    before = migration.initial_source_cursor(reg)
+    calls = []
+
+    def interval(session, generation, publication, envelope_hash):
+        calls.append(session)
+        return dict(
+            status="ok",
+            job_id=reg["job_id"],
+            staging_cursor=before,
+            completed_frontier=before,
+            counts=migration.empty_counts(),
+            state="active" if len(calls) == 1 else "snapshot_export_exhausted",
+        )
+
+    monkeypatch.setattr(api(), "step", interval)
+
+    class Lease:
+        def __init__(self):
+            self.reads = 0
+
+        def _ready(self):
+            return None
+
+        def exact(self, directory, operation, arguments):
+            self.reads += 1
+            assert operation == "layout_read" and arguments["operation"] == "receipt"
+            assert arguments["envelope_hash"] == "a" * 64
+            return dict(
+                status="ok", digest=prepared.canonical.digest, receipt=prepared.canonical.receipt
+            )
+
+    first = Lease()
+    result = api().publish(first, Path(reg["destination"]), prepared, "a" * 64)
+    assert result == dict(status="in_progress", reason="direct_publication_intervals")
+    assert calls == [first] and first.reads == 0
+    later = Lease()
+    assert (
+        api().publish(later, Path(reg["destination"]), prepared, "a" * 64)
+        == prepared.canonical.receipt
+    )
+    assert calls == [first, later] and later.reads == 1
+
+
 def test_fresh_append_yields_without_claiming_proof_or_starting_another_worker(tmp_path):
     from cognitive_castle.canonical_records import _json
 
