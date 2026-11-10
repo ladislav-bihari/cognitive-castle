@@ -1,0 +1,42 @@
+name: Direct live codec green qualification
+on:
+  push:
+    branches: [verify/live-publication-codec-coordinator-control-green-20261109]
+permissions:
+  contents: read
+jobs:
+  codec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12.11"
+      - run: python -m pip install pytest==9.0.3 psutil==7.2.2
+      - run: python .github/scripts/live_codec_check.py prepare
+      - shell: bash
+        run: |
+          set +e
+          python .github/scripts/live_codec_check.py run > ci-live-codec-results/output.log 2>&1
+          CASTLE_TEST_RC=$?
+          set -e
+          cat ci-live-codec-results/output.log
+          python .github/scripts/live_codec_check.py verify "$CASTLE_TEST_RC"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: live-codec-green
+          path: |
+            ci-live-codec-results/*.json
+            ci-live-codec-results/*.xml
+            ci-live-codec-results/*.log
+            ci-live-codec-results/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
