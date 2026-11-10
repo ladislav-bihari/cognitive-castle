@@ -15,6 +15,7 @@ from . import lance_layout_codec as layout
 from .lance_layout_directory import load_layout_qualification
 
 NAME = "canonical-selection.json"
+BACKEND = "canonical-backend.json"
 MAX_BYTES = 16384
 
 
@@ -115,9 +116,26 @@ def load_selection(palace):
             return None
         _directory(directory)
         marker = directory / NAME
-        raw = _file(marker, immutable=True, missing=True)
-        if raw is None:
+        declaration_path = directory / BACKEND
+        declaration = _file(declaration_path, immutable=True, missing=True)
+        if declaration is None:
+            if marker.exists() or marker.is_symlink():
+                raise ValueError("orphan canonical selection")
             return None
+        backend = strict_loads(declaration, max_bytes=MAX_BYTES)
+        if (
+            not isinstance(backend, dict)
+            or backend.keys() != {"format", "backend", "selection_hash"}
+            or backend["format"] != "castle-canonical-backend-v1"
+            or backend["backend"] != "lance"
+        ):
+            raise ValueError("canonical backend declaration")
+        layout.bulk.sha(backend["selection_hash"])
+        if _json(backend).encode() != declaration:
+            raise ValueError("backend canonical encoding")
+        raw = _file(marker, immutable=True)
+        if _hash(raw.decode("utf-8")) != backend["selection_hash"]:
+            raise ValueError("canonical selection changed")
         value = strict_loads(raw, max_bytes=MAX_BYTES)
         _validate(value)
         if _json(value).encode() != raw:
@@ -152,7 +170,10 @@ def load_selection(palace):
         # Verify the small manifest only; weight hashing belongs in the worker.
         if _hash(_file(Path(value["profile"]["path"])).decode("utf-8")) != value["profile"]["hash"]:
             raise ValueError("selected profile changed")
-        if _file(marker, immutable=True) != raw:
+        if (
+            _file(marker, immutable=True) != raw
+            or _file(declaration_path, immutable=True) != declaration
+        ):
             raise ValueError("selection changed during load")
         return value
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
