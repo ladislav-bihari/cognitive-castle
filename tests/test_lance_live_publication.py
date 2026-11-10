@@ -105,3 +105,85 @@ def test_modified_preparation_is_refused_before_registering_outbox():
     prepared.entries[0]["text"] = "changed"
     with pytest.raises(ValueError):
         api().publish(Ready(), Path("/generation"), prepared, "a" * 64)
+
+
+def test_fresh_append_yields_without_claiming_proof_or_starting_another_worker(tmp_path):
+    from cognitive_castle.canonical_records import _json
+
+    prepared, qualification, _, _ = source_case()
+    generation = tmp_path.resolve() / "generation"
+    generation.mkdir(mode=0o700)
+    (generation / "exact").mkdir(mode=0o700)
+    info = generation.stat()
+    identity = dict(path=str(generation), device=info.st_dev, inode=info.st_ino)
+    qualification["generation"] = identity
+    _, _, _, envelope = qualification_case()
+    envelope.update(generation=identity, qualification_hash=migration.hashed(qualification))
+    artifact = generation / "exact/layout-qualification.json"
+    artifact.write_text(_json(qualification))
+    artifact.chmod(0o400)
+    reg = migration.registration(codec.source_descriptor(prepared.intent), str(generation))
+    before = migration.initial_source_cursor(reg)
+    window = dict(
+        format=layout.SOURCE_REQUEST,
+        action="plan",
+        generation=identity,
+        qualification_hash=envelope["qualification_hash"],
+        allowed_plan_hashes=[],
+        packing=layout.PACKING,
+    )
+    plan = api().source_result(prepared, reg, before, window, qualification)["plans"][0]
+    target = layout.target(envelope, 0, [plan])
+    exported = codec.source_slice(prepared, before)
+    pending = layout.prepare_layout_interval(reg, exported, target)
+    state = dict(
+        status="ok",
+        registration=reg,
+        pending=pending,
+        staging_cursor=before,
+        completed_frontier=before,
+        counts=migration.empty_counts(),
+        state="active",
+        last_ack=None,
+        layout=dict(
+            format=layout.ATTACHMENT, envelope_hash=migration.hashed(envelope), envelope=envelope
+        ),
+        native_layout=dict(
+            format="lance-layout-native-context-v1",
+            generation=identity,
+            qualification_hash=envelope["qualification_hash"],
+            epoch="e" * 64,
+            plan=plan,
+            target=target,
+        ),
+    )
+
+    class FreshOnly:
+        def __init__(self):
+            self.append_seen = False
+
+        def _ready(self):
+            return None
+
+        def store(self, directory, operation, arguments):
+            assert operation == "queue_live_open", "fresh preparation must not ACK"
+            return copy.deepcopy(state)
+
+        def exact(self, directory, operation, arguments):
+            assert not self.append_seen, "cold verification needs the next bounded lease"
+            self.append_seen = True
+            assert operation == "layout_import_batch"
+            # A fresh response deliberately contains no durable routes/proofs.
+            return dict(
+                status="ok",
+                format=layout.BATCH_RESULT,
+                outcome="fresh_append",
+                receipt=layout.expected_receipt(pending),
+                routes=[],
+            )
+
+    session = FreshOnly()
+    result = api().step(session, generation, prepared, migration.hashed(envelope))
+    assert session.append_seen and result["status"] == "in_progress"
+    assert result["phase"] == "verify_replay" and result["cursor_after"] == before
+    assert "receipt" not in result and "ids" not in result

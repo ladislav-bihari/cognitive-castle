@@ -143,17 +143,20 @@ def _case_publication_reopens_and_refuses_changed_request(tmp_path):
 
     generation, publication, binding = _setup_live(tmp_path)
     first, observed = _attempt(generation, publication, binding)
-    assert first["status"] == "ok" and first["counts"]["members"] == 0, first
+    assert first["status"] == "in_progress", first
     assert "ids" not in first and "receipt" not in first
-    assert [observed.results[f"layout_import_batch:{n}"]["outcome"] for n in (1, 2)] == [
-        "fresh_append",
-        "existing_verified",
-    ]
+    assert observed.results["layout_import_batch:1"]["outcome"] == "fresh_append"
+    assert "queue_layout_ack:1" not in observed.calls
+    replayed, observed = _attempt(generation, publication, binding)
+    assert replayed["status"] == "ok" and replayed["counts"]["members"] == 0, replayed
+    assert observed.results["layout_import_batch:1"]["outcome"] == "existing_verified"
+    staged, observed = _attempt(generation, publication, binding)
+    assert staged["status"] == "in_progress", staged
+    assert "queue_layout_ack:1" not in observed.calls
     final, observed = _attempt(generation, publication, binding)
     assert final["status"] == "ok" and final["counts"]["members"] == 1, final
-    assert observed.calls[-4:] == [
+    assert observed.calls[-3:] == [
         "layout_import_batch:1",
-        "layout_import_batch:2",
         "layout_verify_owners:1",
         "queue_layout_ack:1",
     ]
@@ -182,6 +185,9 @@ def _case_lost_append_response_resumes_exact_pending_batch(tmp_path):
     assert resumed["status"] == "ok" and resumed["counts"]["members"] == 0, resumed
     assert after.results["layout_import_batch:1"]["outcome"] == "existing_verified"
     assert before.arguments["layout_import_batch:1"] == after.arguments["layout_import_batch:1"]
+    staged, observed = _attempt(generation, publication, binding)
+    assert staged["status"] == "in_progress", staged
+    assert "queue_layout_ack:1" not in observed.calls
     final, _ = _attempt(generation, publication, binding)
     assert final["status"] == "ok" and final["counts"]["members"] == 1, final
     receipt, _ = _attempt(generation, publication, binding, complete=True)

@@ -84,7 +84,7 @@ class _DirectSession:
 
 
 def step(session, generation, publication, envelope_hash):
-    """One actual append/replay/owner-proof/ACK interval; no canonical receipt."""
+    """One bounded interval; a fresh append yields for a later cold lease."""
     from .lance_layout_directory import load_layout_qualification
     from .migration_coordinator import _layout_envelope, _layout_tick
 
@@ -116,7 +116,7 @@ def step(session, generation, publication, envelope_hash):
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "direct_publication_authority"}
     adapter = _DirectSession(session, publication, registration, qualification)
-    return _layout_tick(adapter, registration, defer_append=False, state=state)
+    return _layout_tick(adapter, registration, defer_append=True, state=state)
 
 
 def publish(session, generation, publication, envelope_hash):
