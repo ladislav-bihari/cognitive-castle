@@ -36,7 +36,9 @@ def source_case(text="body", workspace="/project"):
 
 
 @pytest.mark.parametrize(
-    "text,scope", [("body", "/project"), ("\x00" * 65536, "\x00" * 2048)], ids=["short", "max-escaped"]
+    "text,scope",
+    [("body", "/project"), ("\x00" * 65536, "\x00" * 2048)],
+    ids=["short", "max-escaped"],
 )
 def test_direct_source_plan_reserves_every_actual_frame_and_finalization(text, scope):
     prepared, qualification, reg, window = source_case(text, scope)
