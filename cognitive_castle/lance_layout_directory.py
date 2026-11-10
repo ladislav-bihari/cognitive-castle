@@ -145,11 +145,17 @@ class LayoutDirectory:
 
     def _schema(self):
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        tables = DDL | (NATIVE_DDL if version == 5 else {})
-        indexes = INDEXES | (NATIVE_INDEXES if version == 5 else {})
+        tables = DDL | (NATIVE_DDL if version in (5, 6) else {})
+        indexes = INDEXES | (NATIVE_INDEXES if version in (5, 6) else {})
+        if version == 6:
+            from . import semantic_schedule
+
+            tables = tables | semantic_schedule.DDL
+            indexes = indexes | semantic_schedule.INDEXES
         maximum = len(BASE_TABLES) + len(tables) + len(indexes)
         lengths = self.conn.execute(
-            "SELECT length(CAST(name AS BLOB)),length(CAST(type AS BLOB)),length(CAST(sql AS BLOB)) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 20"
+            "SELECT length(CAST(name AS BLOB)),length(CAST(type AS BLOB)),length(CAST(sql AS BLOB)) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT ?",
+            (maximum + 1,),
         ).fetchall()
         if len(lengths) != maximum or any(
             a is None or a > 64 or b is None or b > 16 or c is None or c > 4096
@@ -157,7 +163,8 @@ class LayoutDirectory:
         ):
             raise _StoreError("unavailable")
         rows = self.conn.execute(
-            "SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 20"
+            "SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT ?",
+            (maximum + 1,),
         ).fetchall()
         if len(rows) != maximum:
             raise _StoreError("unavailable")
@@ -176,7 +183,7 @@ class LayoutDirectory:
             if name in indexes and sql != indexes[name]:
                 raise _StoreError("unavailable")
             seen.add(name)
-        if version not in (4, 5):
+        if version not in (4, 5, 6):
             raise _StoreError("unavailable")
         require_attachment_column(self.conn)
 
@@ -190,7 +197,7 @@ class LayoutDirectory:
             if exists:
                 raise _StoreError("unavailable")
             return None
-        if version not in (4, 5):
+        if version not in (4, 5, 6):
             raise _StoreError("unavailable")
         require_attachment_column(self.conn)
         marker_row = self.conn.execute(
@@ -275,7 +282,7 @@ class LayoutDirectory:
         if len({p["owner"] for p in plans}) != len(plans):
             raise ValueError("duplicate owner plan")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version in (4, 5):
+        if version in (4, 5, 6):
             require_attachment_column(self.conn)
             attached = self.attachment(job_id)
         else:
@@ -285,7 +292,7 @@ class LayoutDirectory:
         if version == 3:
             self.conn.execute("ALTER TABLE migration_jobs ADD COLUMN layout_attachment TEXT")
             self.conn.execute("PRAGMA user_version=4")
-        elif version not in (4, 5):
+        elif version not in (4, 5, 6):
             raise _StoreError("unavailable")
         require_attachment_column(self.conn)
         # Only the one initial bind creates derived tables, inside this transaction.
@@ -295,7 +302,7 @@ class LayoutDirectory:
         expected_objects = (
             DDL.keys()
             | INDEXES.keys()
-            | (NATIVE_DDL.keys() | NATIVE_INDEXES.keys() if version == 5 else set())
+            | (NATIVE_DDL.keys() | NATIVE_INDEXES.keys() if version in (5, 6) else set())
         )
         if present and {r[0] for r in present} != expected_objects:
             raise _StoreError("unavailable")
@@ -832,7 +839,7 @@ def readonly_directory(generation):
 def _directory(conn):
     return (
         _NativeLayoutDirectory(conn)
-        if conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        if conn.execute("PRAGMA user_version").fetchone()[0] in (5, 6)
         else LayoutDirectory(conn)
     )
 
@@ -951,7 +958,7 @@ def _prepare_layout_authority(conn, envelope, qualification, *, expected_hash):
     if not conn.in_transaction:
         raise _StoreError("unavailable")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version == 5:
+    if version in (5, 6):
         registered = _NativeLayoutDirectory(conn)
         if registered.envelope != envelope or registered.qualification != qualification:
             _conflict()
@@ -1018,9 +1025,9 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
     if not conn.in_transaction:
         raise _StoreError("unavailable")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (3, 5):
+    if version not in (3, 5, 6):
         raise _StoreError("unavailable")
-    if version == 5:
+    if version in (5, 6):
         registered = _NativeLayoutDirectory(conn)
         if registered.envelope != envelope or registered.qualification != qualification:
             _conflict()
@@ -1042,12 +1049,12 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
 
 
 class _NativeLayoutDirectory(LayoutDirectory):
-    """Schema5 authority; derived routes never reconstruct ownership claims."""
+    """Schema5/6 authority; derived routes never reconstruct ownership claims."""
 
     def __init__(self, conn):
         super().__init__(conn)
         self._schema()
-        if conn.execute("PRAGMA user_version").fetchone()[0] != 5:
+        if conn.execute("PRAGMA user_version").fetchone()[0] not in (5, 6):
             raise _StoreError("unavailable")
         row = conn.execute(
             "SELECT CASE WHEN typeof(envelope)='text' AND length(CAST(envelope AS BLOB))<=196608 THEN envelope END,CASE WHEN length(CAST(qualification_hash AS BLOB))=64 THEN qualification_hash END,CASE WHEN length(CAST(epoch AS BLOB))=64 THEN epoch END FROM layout_authority WHERE id=1"

@@ -841,11 +841,12 @@ def configure_memory_parser(sub):
         "semantic", help="Operator: explicit bounded semantic diagnostic; no activation"
     )
     semantic_actions = semantic.add_subparsers(dest="semantic_action", required=True)
-    tick = semantic_actions.add_parser("tick")
-    tick.add_argument("--max-seconds", type=float, default=5)
-    tick.add_argument(
-        "--diagnostic", action="store_true", help="Opt in to the diagnostic-only model profile"
-    )
+    for action in ("tick", "prepare"):
+        child = semantic_actions.add_parser(action)
+        child.add_argument("--max-seconds", type=float, default=5)
+        child.add_argument(
+            "--diagnostic", action="store_true", help="Opt in to the diagnostic-only profile"
+        )
     capture = actions.add_parser("capture", help="Operator: bounded automatic capture")
     capture_actions = capture.add_subparsers(dest="capture_action", required=True)
     for action in ("enable", "pause", "status", "tick", "reconcile"):
@@ -874,11 +875,12 @@ def cmd_memory(args):
 
             result = cmd_history(api.palace, args)
         elif args.memory_action == "semantic":
-            from .semantic_coordinator import index_tick
+            from .semantic_coordinator import index_tick, prepare_index_schedule
 
-            result = index_tick(
-                api.palace, diagnostic=args.diagnostic, max_seconds=args.max_seconds
-            )
+            if args.semantic_action not in {"tick", "prepare"}:
+                raise ValueError("Unknown semantic operator action")
+            operation = prepare_index_schedule if args.semantic_action == "prepare" else index_tick
+            result = operation(api.palace, diagnostic=args.diagnostic, max_seconds=args.max_seconds)
         elif args.memory_action == "capture":
             from .memory_coordinator import capture_status, capture_tick, configure_capture
 

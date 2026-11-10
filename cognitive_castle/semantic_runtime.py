@@ -411,6 +411,7 @@ class LayoutSemanticSession(SemanticSession):
             "vector_layout_receipt",
             "vector_layout_prepare",
             "queue_prepare_index",
+            "queue_initialize_index_schedule",
         }:
             if self.envelope_hash is not None:
                 arguments = dict(arguments, envelope_hash=self.envelope_hash)

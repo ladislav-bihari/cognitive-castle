@@ -187,3 +187,74 @@ def test_untyped_fairness_flag_is_rejected_before_transaction(control, monkeypat
     monkeypatch.setattr(store, "_run", forbidden)
     with pytest.raises(ValueError):
         store.prepare_index(envelope_hash=pin, require_fairness=value)
+
+
+def test_corrupt_backfill_rolls_back_schema_creation(control):
+    store, pin = setup(control)
+    add(store, "bad")
+    with store._connection(True) as conn:
+        conn.execute("UPDATE intents SET binding=?", ("f" * 64,))
+    before = snapshot(store)
+    assert store.initialize_index_schedule(envelope_hash=pin)["status"] == "corrupt"
+    assert snapshot(store) == before
+
+
+def test_failed_group_claim_rolls_back_fair_turn_and_group_state(control, monkeypatch):
+    store, pin = setup(control)
+    add(store, "pending")
+    assert store.register(**registration("ready"))["status"] == "ok"
+    assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is True
+    assert store.prepare_index(envelope_hash=pin)["intents"]
+    with store._connection(False) as conn:
+        before = tuple(conn.execute("SELECT * FROM index_schedule").fetchone())
+    original = store._select_group
+
+    def interrupted(conn):
+        original(conn)
+        raise ValueError("interrupted actual group claim")
+
+    monkeypatch.setattr(store, "_select_group", interrupted)
+    assert store.prepare_index(envelope_hash=pin)["status"] == "unavailable"
+    with store._connection(False) as conn:
+        assert tuple(conn.execute("SELECT * FROM index_schedule").fetchone()) == before
+        assert conn.execute("SELECT state FROM groups").fetchone()[0] == "pending"
+
+
+def test_wrong_authority_does_not_consume_a_fair_turn(control):
+    store, pin = setup(control)
+    add(store, "pending")
+    assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is True
+    with store._connection(False) as conn:
+        before = tuple(conn.execute("SELECT * FROM index_schedule").fetchone())
+    assert store.prepare_index(envelope_hash="f" * 64)["status"] == "conflict"
+    with store._connection(False) as conn:
+        assert tuple(conn.execute("SELECT * FROM index_schedule").fetchone()) == before
+
+
+def test_intents_added_and_completed_during_backfill_keep_atomic_projection(control):
+    store, pin = setup(control)
+    for n in range(9):
+        add(store, str(n))
+    assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is False
+    late = add(store, "late")
+    assert store.intent_complete(late["intent_id"], digest(late))["status"] == "ok"
+    assert store.initialize_index_schedule(envelope_hash=pin) == dict(
+        status="ok", format=FORMAT, processed=2, backfill_cursor=10, ready=True
+    )
+    with store._connection(False) as conn:
+        row = conn.execute(
+            "SELECT seq,lane,complete FROM index_intents WHERE intent_id=?", (late["intent_id"],)
+        ).fetchone()
+        assert tuple(row) == (10, "new", 1)
+
+
+def test_mixed_lane_intent_gets_new_priority_without_changing_original(control):
+    store, pin = setup(control)
+    add(store, "old", "history")
+    prepared = prepare_remember("mixed", "€" * 21845)
+    intent = prepare_intent(prepared, [SCOPE] * len(prepared.records), "new")
+    assert len(intent["groups"]) == 2
+    intent["groups"][1]["lane"] = "history"
+    assert store.intent_prepare(intent)["status"] == "ok"
+    assert store.initialize_index_schedule(envelope_hash=pin)["ready"] is True
+    assert store.prepare_index(envelope_hash=pin)["intents"][0] == intent

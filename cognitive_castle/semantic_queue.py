@@ -189,9 +189,9 @@ class SemanticQueue:
                         "CREATE TABLE acknowledgements (batch_key TEXT NOT NULL, start INTEGER NOT NULL, receipt TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(batch_key,start))"
                     )
                     conn.execute("PRAGMA user_version=1")
-                elif version not in (1, 2, 3, 4, 5):
+                elif version not in (1, 2, 3, 4, 5, 6):
                     raise _StoreError("corrupt")
-                if version in (4, 5):
+                if version in (4, 5, 6):
                     from .lance_layout_directory import LayoutDirectory
 
                     LayoutDirectory(conn)._schema()
@@ -210,15 +210,15 @@ class SemanticQueue:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS migration_owners (job_id TEXT NOT NULL, owner TEXT NOT NULL, reference TEXT NOT NULL, PRIMARY KEY(job_id,owner))"
                 )
-                if version in (4, 5):
+                if version in (4, 5, 6):
                     from .lance_layout_directory import require_attachment_column
 
                     require_attachment_column(conn)
                 else:
                     conn.execute("PRAGMA user_version=3")
-            elif conn.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4, 5):
+            elif conn.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4, 5, 6):
                 raise _StoreError("corrupt")
-            elif conn.execute("PRAGMA user_version").fetchone()[0] in (4, 5):
+            elif conn.execute("PRAGMA user_version").fetchone()[0] in (4, 5, 6):
                 from .lance_layout_directory import require_attachment_column
 
                 require_attachment_column(conn)
@@ -320,13 +320,17 @@ class SemanticQueue:
 
     def _select_group(self, conn):
         streak = conn.execute("SELECT new_pages FROM schedule WHERE id=1").fetchone()[0]
-        lanes = {
-            lane: conn.execute(
-                "SELECT * FROM groups WHERE lane=? AND state IN ('pending','inflight') ORDER BY CASE state WHEN 'inflight' THEN 0 ELSE 1 END,seq LIMIT 1",
+        lanes = {}
+        for lane in ("new", "history"):
+            lanes[lane] = conn.execute(
+                "SELECT * FROM groups WHERE lane=? AND state='inflight' ORDER BY seq LIMIT 1",
                 (lane,),
             ).fetchone()
-            for lane in ("new", "history")
-        }
+            if lanes[lane] is None:
+                lanes[lane] = conn.execute(
+                    "SELECT * FROM groups WHERE lane=? AND state='pending' ORDER BY seq LIMIT 1",
+                    (lane,),
+                ).fetchone()
         lane = (
             "history"
             if lanes["history"] is not None and (streak >= 3 or lanes["new"] is None)
@@ -347,8 +351,10 @@ class SemanticQueue:
     def select(self):
         return self._run(True, self._select_group)
 
-    def prepare_index(self, *, envelope_hash=None):
+    def prepare_index(self, *, envelope_hash=None, require_fairness=False):
         """Poll bounded intents or claim one ready page in one transaction."""
+        if type(require_fairness) is not bool:
+            raise ValueError("fair scheduling flag")
         if envelope_hash is not None:
             validate_hash(envelope_hash)
 
@@ -358,6 +364,12 @@ class SemanticQueue:
 
                 if digest(_NativeLayoutDirectory(conn).envelope) != envelope_hash:
                     return {"status": "conflict"}
+            if conn.execute("PRAGMA user_version").fetchone()[0] == 6:
+                from . import semantic_schedule
+
+                return semantic_schedule.prepare(conn, self._select_group)
+            if require_fairness:
+                return dict(status="unavailable", reason="index_schedule_not_ready")
             pending = self._pending_intents(conn)
             return dict(
                 status="ok",
@@ -366,6 +378,20 @@ class SemanticQueue:
             )
 
         return self._run(True, prepare)
+
+    def initialize_index_schedule(self, *, envelope_hash):
+        """Explicit bounded operator schema preparation; ordinary calls never upgrade."""
+        validate_hash(envelope_hash)
+
+        def initialize(conn):
+            from .lance_layout_directory import _NativeLayoutDirectory
+            from . import semantic_schedule
+
+            if digest(_NativeLayoutDirectory(conn).envelope) != envelope_hash:
+                return dict(status="conflict")
+            return semantic_schedule.initialize(conn)
+
+        return self._run(True, initialize)
 
     def acknowledge(self, batch_key, receipt):
         _string(batch_key, 128, "batch key")
@@ -503,14 +529,25 @@ class SemanticQueue:
                 "SELECT binding FROM intents WHERE intent_id=?", (intent["intent_id"],)
             ).fetchone()
             if old:
-                return {"status": "ok" if old["binding"] == digest(intent) else "conflict"}
+                if old["binding"] != digest(intent):
+                    return {"status": "conflict"}
+                self._project_intent(conn, intent["intent_id"])
+                return {"status": "ok"}
             conn.execute(
                 "INSERT INTO intents(intent_id,binding,intent_json) VALUES (?,?,?)",
                 (intent["intent_id"], digest(intent), encoded),
             )
+            self._project_intent(conn, intent["intent_id"])
             return {"status": "ok"}
 
         return self._run(True, prepare)
+
+    @staticmethod
+    def _project_intent(conn, identity):
+        if conn.execute("PRAGMA user_version").fetchone()[0] == 6:
+            from . import semantic_schedule
+
+            semantic_schedule.project(conn, identity)
 
     def _pending_intents(self, conn):
         cursor = conn.execute("SELECT intent_cursor FROM schedule WHERE id=1").fetchone()[0]
@@ -559,7 +596,10 @@ class SemanticQueue:
                         group["lane"],
                     ),
                 )
+            self._project_intent(conn, intent_id)
             conn.execute("UPDATE intents SET complete=1 WHERE intent_id=?", (intent_id,))
+            if conn.execute("PRAGMA user_version").fetchone()[0] == 6:
+                conn.execute("UPDATE index_intents SET complete=1 WHERE intent_id=?", (intent_id,))
             return {"status": "ok"}
 
         return self._run(True, complete)
@@ -569,7 +609,7 @@ class SemanticQueue:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version < 3:
             raise _StoreError("not_found")
-        if version in (4, 5):
+        if version in (4, 5, 6):
             marker = conn.execute(
                 "SELECT length(CAST(layout_attachment AS BLOB)) FROM migration_jobs WHERE job_id=?",
                 (job_id,),

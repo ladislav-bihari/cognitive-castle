@@ -26,6 +26,9 @@ class SelectedIndexSession(LayoutSemanticSession):
 
     _defer_index_after_recovery = True
 
+    def prepare_index(self, directory):
+        return self.store(directory, "queue_prepare_index", dict(require_fairness=True))
+
     def __init__(self, palace, selected):
         self.palace = Path(palace)
         # The loaded snapshot belongs to this invocation, not to caller mutation.
@@ -60,6 +63,15 @@ def index_tick(palace, *, diagnostic=False, max_seconds=5):
     No caller-controlled workers, models, limits or generation arguments. The
     diagnostic flag never authorizes production use of the 512/640 MiB profile.
     """
+    return _operator_tick(palace, diagnostic, max_seconds, prepare=False)
+
+
+def prepare_index_schedule(palace, *, diagnostic=False, max_seconds=5):
+    """Explicit operator preparation of at most eight body-free scheduling rows."""
+    return _operator_tick(palace, diagnostic, max_seconds, prepare=True)
+
+
+def _operator_tick(palace, diagnostic, max_seconds, *, prepare):
     if (
         type(diagnostic) is not bool
         or type(max_seconds) not in (int, float)
@@ -80,19 +92,23 @@ def index_tick(palace, *, diagnostic=False, max_seconds=5):
         return dict(status="unavailable", reason="semantic_deadline")
     try:
         with selection_lease(palace, selected):
-            return _index_leased(palace, selected, until)
+            return _index_leased(palace, selected, until, prepare=prepare)
     except SelectionBusy:
         return dict(status="unavailable", reason="canonical_selection_busy")
     except SelectionUnavailable:
         return dict(status="unavailable", reason="canonical_selection_changed")
 
 
-def _index_leased(palace, selected, until):
+def _index_leased(palace, selected, until, *, prepare):
     with SelectedIndexSession(palace, selected) as session:
         session._until = min(session._until, until)
         refusal = session._ready()
         if refusal is not None:
             return refusal
-        result = index_one(session, session.generation)
+        result = (
+            session.store(session.generation, "queue_initialize_index_schedule", {})
+            if prepare
+            else index_one(session, session.generation)
+        )
         refusal = session._ready()
         return refusal if refusal is not None else result
