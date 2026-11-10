@@ -10,6 +10,7 @@ import sys
 
 MAX_FRAME = 512 * 1024
 _FIELDS = {
+    "queue_live_open": ({"intent", "envelope_hash"}, set()),
     "queue_layout_resume": ({"registration"}, set()),
     "queue_layout_maintenance_prepare": ({"partition_id", "version"}, set()),
     "queue_layout_rebuild_prepare": ({"partition_id", "version"}, set()),
