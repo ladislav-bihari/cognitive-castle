@@ -121,3 +121,17 @@ def test_pin_cannot_select_flat_vector_authority():
 
     with pytest.raises(ValueError):
         LanceVectorStore(GENERATION, envelope_hash=PIN)
+
+
+@pytest.mark.parametrize("method", ["publish", "receipt"])
+def test_selected_pin_also_binds_pretranslated_vector_operations(monkeypatch, method):
+    def stage(self, request, **limits):
+        assert request["arguments"].get("envelope_hash") == PIN, "selected semantic authority pin missing"
+        assert request["arguments"]["batch_key"] == "unchanged"
+        return dict(status="unavailable", reason="boundary_only")
+
+    monkeypatch.setattr(runtime.SemanticSession, "_run_stage", stage)
+    session = runtime.LayoutSemanticSession(Path("/profile"), GENERATION, envelope_hash=PIN)
+    arguments = dict(batch_key="unchanged", envelope_hash="b" * 64)
+    session.store(GENERATION, "vector_layout_" + method, arguments)
+    assert arguments == dict(batch_key="unchanged", envelope_hash="b" * 64)
