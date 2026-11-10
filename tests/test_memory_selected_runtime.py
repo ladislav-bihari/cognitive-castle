@@ -66,6 +66,27 @@ def test_selected_read_binds_authority_and_original_deadline(monkeypatch, tmp_pa
     assert arguments["envelope_hash"] == api().layout_hash(selected)
 
 
+def test_selected_public_text_field_is_translated_without_changing_page_limits(monkeypatch, tmp_path):
+    palace, _, selected = fixture(tmp_path)
+    made = session(monkeypatch)
+    arguments = dict(source_id="memory:" + "a" * 64, field="text", offset=1024, limit=2048, expected_hash="b" * 64)
+    result = api().run_selected(palace, selected, "page", arguments, until=time.monotonic()+2, background=False)
+    assert result == dict(status="unavailable", reason="native_fixture_not_run")
+    passed = made[0].calls[0][2]
+    assert passed["operation"] == "page"
+    assert passed["arguments"] == dict(source_id="memory:" + "a" * 64, offset=1024, limit=2048, expected_hash="b" * 64)
+    assert arguments["field"] == "text"  # Caller-owned packet is untouched.
+
+
+@pytest.mark.parametrize("field", ["metadata", "columns"])
+def test_selected_metadata_field_never_falls_back_to_text(monkeypatch, tmp_path, field):
+    palace, _, selected = fixture(tmp_path)
+    made = session(monkeypatch)
+    result = api().run_selected(palace, selected, "page", dict(source_id="memory:" + "a" * 64, field=field), until=time.monotonic()+2, background=False)
+    assert result == dict(status="unavailable", reason="canonical_route_not_ready")
+    assert made[0].calls == []
+
+
 def test_selected_remember_uses_same_lease_and_preserves_caller_without_invented_project(
     monkeypatch, tmp_path
 ):
