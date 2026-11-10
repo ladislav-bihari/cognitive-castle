@@ -351,7 +351,14 @@ class LayoutSemanticSession(SemanticSession):
     session does not register, migrate or activate a production generation.
     """
 
-    def __init__(self, trusted_profile: Path, generation: Path, *, interactive=True):
+    def __init__(
+        self, trusted_profile: Path, generation: Path, *, interactive=True, envelope_hash=None
+    ):
+        from .semantic_queue import validate_hash
+
+        if envelope_hash is not None:
+            validate_hash(envelope_hash)
+        self.envelope_hash = envelope_hash
         self.generation = Path(generation)
         if not self.generation.is_absolute() or ".." in self.generation.parts:
             raise ValueError("registered semantic generation")
@@ -366,14 +373,17 @@ class LayoutSemanticSession(SemanticSession):
         self._directory(directory, self.generation / "exact")
         if operation not in {"read_sources", "receipt", "page"}:
             raise ValueError("registered exact read operation")
+        bound = {} if self.envelope_hash is None else dict(envelope_hash=self.envelope_hash)
         return super().exact(
             self.generation,
             "layout_read",
-            dict(operation=operation, arguments=arguments),
+            dict(operation=operation, arguments=arguments, **bound),
         )
 
     def store(self, directory, operation, arguments):
         self._directory(directory, self.generation)
         if operation in {"vector_publish", "vector_receipt"}:
             operation = operation.replace("vector_", "vector_layout_", 1)
+            if self.envelope_hash is not None:
+                arguments = dict(arguments, envelope_hash=self.envelope_hash)
         return super().store(directory, operation, arguments)

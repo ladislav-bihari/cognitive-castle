@@ -240,9 +240,16 @@ def _schema():
 
 
 class LanceVectorStore:
-    def __init__(self, directory: Path, *, writable=False, exact_layout=False):
+    def __init__(self, directory: Path, *, writable=False, exact_layout=False, envelope_hash=None):
         if type(writable) is not bool or type(exact_layout) is not bool:
             raise ValueError("writable or exact layout")
+        if envelope_hash is not None:
+            from .semantic_queue import validate_hash
+
+            validate_hash(envelope_hash)
+            if not exact_layout:
+                raise ValueError("authority pin requires registered exact layout")
+        self.envelope_hash = envelope_hash
         self.generation = Path(directory).absolute()
         self.directory = self.generation / "vectors"
         self.writable = writable
@@ -346,8 +353,9 @@ class LanceVectorStore:
         if self.exact_layout:
             from .partitioned_exact_store import PartitionedExactStore
 
+            bound = {} if self.envelope_hash is None else dict(envelope_hash=self.envelope_hash)
             result = PartitionedExactStore(self.generation).layout_read(
-                "read_sources", {"ids": ids}
+                "read_sources", {"ids": ids}, **bound
             )
         else:
             result = LanceExactStore(self.generation / "exact").read_sources(ids)

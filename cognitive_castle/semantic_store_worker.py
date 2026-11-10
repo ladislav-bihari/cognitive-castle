@@ -34,9 +34,9 @@ _FIELDS = {
     "queue_status": (set(), set()),
     "queue_retry": ({"batch_key"}, {"refused"}),
     "vector_publish": ({"batch_key", "references", "page", "inference"}, set()),
-    "vector_layout_publish": ({"batch_key", "references", "page", "inference"}, set()),
+    "vector_layout_publish": ({"batch_key", "references", "page", "inference"}, {"envelope_hash"}),
     "vector_receipt": ({"batch_key", "start_window"}, set()),
-    "vector_layout_receipt": ({"batch_key", "start_window"}, set()),
+    "vector_layout_receipt": ({"batch_key", "start_window"}, {"envelope_hash"}),
     "vector_nearest": (
         {"vector", "profile", "generation", "scope", "allowed_source_hashes", "limit"},
         {"allowed_exposure_hashes"},
@@ -156,8 +156,14 @@ def _execute(request):
 
         if method in {"layout_publish", "layout_receipt"}:
             method = method.removeprefix("layout_")
+            arguments = dict(arguments)
+            bound = {}
+            if "envelope_hash" in arguments:
+                from cognitive_castle.semantic_queue import validate_hash
+
+                bound["envelope_hash"] = validate_hash(arguments.pop("envelope_hash"))
             store = LanceVectorStore(
-                Path(request["directory"]), writable=method == "publish", exact_layout=True
+                Path(request["directory"]), writable=method == "publish", exact_layout=True, **bound
             )
         else:
             store = LanceVectorStore(Path(request["directory"]), writable=method == "publish")
