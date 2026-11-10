@@ -116,7 +116,7 @@ def step(session, generation, publication, envelope_hash):
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "direct_publication_authority"}
     adapter = _DirectSession(session, publication, registration, qualification)
-    return _layout_tick(adapter, registration, defer_append=True, state=state)
+    return _layout_tick(adapter, registration, defer_append=True, state=state, combined_owners=True)
 
 
 def publish(session, generation, publication, envelope_hash):

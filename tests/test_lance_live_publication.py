@@ -172,7 +172,7 @@ def test_fresh_append_yields_without_claiming_proof_or_starting_another_worker(t
         def exact(self, directory, operation, arguments):
             assert not self.append_seen, "cold verification needs the next bounded lease"
             self.append_seen = True
-            assert operation == "layout_import_batch"
+            assert operation == "layout_import_verified"
             # A fresh response deliberately contains no durable routes/proofs.
             return dict(
                 status="ok",
@@ -180,6 +180,7 @@ def test_fresh_append_yields_without_claiming_proof_or_starting_another_worker(t
                 outcome="fresh_append",
                 receipt=layout.expected_receipt(pending),
                 routes=[],
+                owner_proof=None,
             )
 
     session = FreshOnly()

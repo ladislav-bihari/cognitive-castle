@@ -145,26 +145,25 @@ def _case_publication_reopens_and_refuses_changed_request(tmp_path):
     first, observed = _attempt(generation, publication, binding)
     assert first["status"] == "in_progress", first
     assert "ids" not in first and "receipt" not in first
-    assert observed.results["layout_import_batch:1"]["outcome"] == "fresh_append"
+    assert observed.results["layout_import_verified:1"]["outcome"] == "fresh_append"
     assert "queue_layout_ack:1" not in observed.calls
     replayed, observed = _attempt(generation, publication, binding)
     assert replayed["status"] == "ok" and replayed["counts"]["members"] == 0, replayed
-    assert observed.results["layout_import_batch:1"]["outcome"] == "existing_verified"
+    assert observed.results["layout_import_verified:1"]["outcome"] == "existing_verified"
     staged, observed = _attempt(generation, publication, binding)
     assert staged["status"] == "in_progress", staged
     assert "queue_layout_ack:1" not in observed.calls
     final, observed = _attempt(generation, publication, binding)
     assert final["status"] == "ok" and final["counts"]["members"] == 1, final
-    assert observed.calls[-3:] == [
-        "layout_import_batch:1",
-        "layout_verify_owners:1",
-        "queue_layout_ack:1",
-    ]
+    assert observed.calls[-2:] == ["layout_import_verified:1", "queue_layout_ack:1"]
+    owner_proof = observed.results["layout_import_verified:1"]["owner_proof"]
+    assert owner_proof["owners"][0]["live"]["digest"] == publication.canonical.digest
+    assert owner_proof["owners"][0]["live_receipt_ids"] == publication.canonical.receipt["ids"]
     receipt, _ = _attempt(generation, publication, binding, complete=True)
     assert receipt == publication.canonical.receipt
     again, observed = _attempt(generation, publication, binding, complete=True)
     assert again == receipt and not any(
-        c.startswith("layout_import_batch:") for c in observed.calls
+        c.startswith("layout_import_verified:") for c in observed.calls
     )
     changed = codec.prepare_publication(
         prepare_remember("direct-request", "changed", {"note": "original Ω"}),
@@ -178,13 +177,15 @@ def _case_publication_reopens_and_refuses_changed_request(tmp_path):
 
 def _case_lost_append_response_resumes_exact_pending_batch(tmp_path):
     generation, publication, binding = _setup_live(tmp_path)
-    lost, before = _attempt(generation, publication, binding, loss="layout_import_batch:1")
+    lost, before = _attempt(generation, publication, binding, loss="layout_import_verified:1")
     assert lost["status"] == "unavailable" and lost["reason"] == "fixture_lost_response", lost
     assert "queue_layout_ack:1" not in before.calls
     resumed, after = _attempt(generation, publication, binding)
     assert resumed["status"] == "ok" and resumed["counts"]["members"] == 0, resumed
-    assert after.results["layout_import_batch:1"]["outcome"] == "existing_verified"
-    assert before.arguments["layout_import_batch:1"] == after.arguments["layout_import_batch:1"]
+    assert after.results["layout_import_verified:1"]["outcome"] == "existing_verified"
+    assert (
+        before.arguments["layout_import_verified:1"] == after.arguments["layout_import_verified:1"]
+    )
     staged, observed = _attempt(generation, publication, binding)
     assert staged["status"] == "in_progress", staged
     assert "queue_layout_ack:1" not in observed.calls

@@ -225,6 +225,30 @@ class PartitionedExactStore:
 
         return self._run(publish)
 
+    def layout_import_verified(self, intent_id, batch_id, source_binding, entries, finalizations):
+        """Reuse imports, never expected proof: observe a real cold replay's owners.
+
+        A fresh append still yields without owner evidence. The existing pinned
+        owner reader opens its actual dataset independently in this same worker.
+        """
+        batch = self.layout_import_batch(
+            intent_id=intent_id,
+            batch_id=batch_id,
+            source_binding=source_binding,
+            entries=entries,
+            finalizations=finalizations,
+        )
+        if batch.get("status") != "ok":
+            return batch
+        proof = None
+        if batch["outcome"] == "existing_verified" and finalizations:
+            proof = self.layout_verify_owners(
+                intent_id=intent_id, version=layout.positive(batch["routes"][-1]["version"])
+            )
+            if proof.get("status") != "ok":
+                return proof
+        return {**batch, "owner_proof": proof}
+
     def layout_read(self, operation, arguments, *, context=None):
         if operation not in _READ_FIELDS or not isinstance(arguments, dict):
             raise ValueError("layout read operation")

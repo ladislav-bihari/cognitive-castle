@@ -10,6 +10,10 @@ import sys
 
 MAX_FRAME = 512 * 1024
 _FIELDS = {
+    "layout_import_verified": (
+        {"intent_id", "batch_id", "source_binding", "entries", "finalizations"},
+        set(),
+    ),
     "layout_import_batch": (
         {"intent_id", "batch_id", "source_binding", "entries", "finalizations"},
         set(),
@@ -115,6 +119,7 @@ def _execute(request):
         raise ValueError("directory")
     if operation in {
         "layout_import_batch",
+        "layout_import_verified",
         "layout_read",
         "layout_maintain",
         "layout_verify_owners",
@@ -123,7 +128,8 @@ def _execute(request):
 
         store = PartitionedExactStore(
             Path(request["directory"]),
-            writable=operation in {"layout_import_batch", "layout_maintain"},
+            writable=operation
+            in {"layout_import_batch", "layout_import_verified", "layout_maintain"},
         )
         return getattr(store, operation)(**arguments)
     store = BulkExactStore(

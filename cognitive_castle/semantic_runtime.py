@@ -230,6 +230,7 @@ class SemanticSession:
                 "import_batch",
                 "build_id_index",
                 "layout_import_batch",
+                "layout_import_verified",
                 "layout_maintain",
             }
             else 2,

@@ -35,20 +35,36 @@ def _native_fixture_tick(session, registration):
     return _tick(session, registration, native=True)
 
 
-def _layout_replay(session, generation, arguments, pending, *, defer_append=False):
+def _layout_replay(
+    session, generation, arguments, pending, *, defer_append=False, combined_owners=False
+):
     from . import lance_layout_codec as layout
 
     for attempt in range(2):
         phase = "publish" if attempt == 0 else "verify_replay"
         ready = session._ready()
         if ready is not None:
-            return None, ready, phase
-        result = session.exact(generation, "layout_import_batch", arguments)
+            return None, ready, phase, None
+        operation = "layout_import_verified" if combined_owners else "layout_import_batch"
+        result = session.exact(generation, operation, arguments)
         if not isinstance(result, dict) or result.get("status") != "ok":
-            return None, result if isinstance(result, dict) else {"status": "unavailable"}, phase
+            return (
+                None,
+                result if isinstance(result, dict) else {"status": "unavailable"},
+                phase,
+                None,
+            )
         try:
-            if result.keys() != {"status", "format", "outcome", "receipt", "routes"}:
+            fields = {"status", "format", "outcome", "receipt", "routes"}
+            if result.keys() != fields | ({"owner_proof"} if combined_owners else set()):
                 raise ValueError("layout batch envelope")
+            owner_proof = result.get("owner_proof")
+            if combined_owners:
+                if (
+                    result["outcome"] == "fresh_append" or not pending["owners"]
+                ) and owner_proof is not None:
+                    raise ValueError("unexpected owner observation")
+                result = {k: v for k, v in result.items() if k != "owner_proof"}
             for key in ("records", "published_owners", "entries"):
                 codec.bulk.integer(result["receipt"][key])
             if result["format"] != layout.BATCH_RESULT or result[
@@ -56,16 +72,16 @@ def _layout_replay(session, generation, arguments, pending, *, defer_append=Fals
             ] != layout.expected_receipt(pending):
                 raise ValueError("layout batch receipt")
             if result["outcome"] == "existing_verified":
-                return {k: v for k, v in result.items() if k != "status"}, None, None
+                return {k: v for k, v in result.items() if k != "status"}, None, None, owner_proof
             if result["outcome"] != "fresh_append" or result["routes"] != [] or attempt:
                 raise ValueError("layout existing replay required")
         except (ValueError, KeyError, TypeError):
-            return None, {"status": "conflict", "reason": "layout_replay_contract"}, phase
+            return None, {"status": "conflict", "reason": "layout_replay_contract"}, phase, None
         if defer_append:
             # A later caller regenerates from the durable pending intent and
             # proves actual existing bytes. No proof or source body is saved.
             ready = session._ready()
-            return None, ready or {"status": "in_progress", "reason": None}, "verify_replay"
+            return None, ready or {"status": "in_progress", "reason": None}, "verify_replay", None
     raise AssertionError("closed replay outcomes")
 
 
@@ -217,7 +233,12 @@ def _layout_prepared_export(response, context, registration, before, *, prepared
     return result
 
 
-def _layout_check_owners(session, generation, pending, exported, version, refused):
+_OWNER_UNSET = object()
+
+
+def _layout_check_owners(
+    session, generation, pending, exported, version, refused, *, observed=_OWNER_UNSET
+):
     from . import lance_layout_codec as layout
 
     if not pending["owners"]:
@@ -225,9 +246,14 @@ def _layout_check_owners(session, generation, pending, exported, version, refuse
     ready = session._ready()
     if ready is not None:
         return None, refused(ready, "owner")
-    observed = session.exact(
-        generation, "layout_verify_owners", dict(intent_id=pending["intent_id"], version=version)
-    )
+    if observed is _OWNER_UNSET:
+        observed = session.exact(
+            generation,
+            "layout_verify_owners",
+            dict(intent_id=pending["intent_id"], version=version),
+        )
+    elif not isinstance(observed, dict):
+        return None, refused({"status": "conflict", "reason": "layout_owner_contract"}, "owner")
     if not isinstance(observed, dict) or observed.get("status") != "ok":
         return None, refused(
             observed if isinstance(observed, dict) else {"status": "unavailable"}, "owner"
@@ -258,7 +284,7 @@ def _layout_fixture_step(session, registration):
     return _layout_tick(session, registration, defer_append=True)
 
 
-def _layout_tick(session, registration, *, defer_append, state=None):
+def _layout_tick(session, registration, *, defer_append, state=None, combined_owners=False):
     """Private single-owner layout protocol; authority stays in registered stores."""
     from . import lance_layout_codec as layout
 
@@ -346,12 +372,27 @@ def _layout_tick(session, registration, *, defer_append, state=None):
             )
         pending = regenerated
     return _layout_complete(
-        session, generation, registration, pending, exported, refused, defer_append=defer_append
+        session,
+        generation,
+        registration,
+        pending,
+        exported,
+        refused,
+        defer_append=defer_append,
+        combined_owners=combined_owners,
     )
 
 
 def _layout_complete(
-    session, generation, registration, pending, exported, refused, *, defer_append
+    session,
+    generation,
+    registration,
+    pending,
+    exported,
+    refused,
+    *,
+    defer_append,
+    combined_owners=False,
 ):
     from . import lance_layout_codec as layout
 
@@ -362,8 +403,13 @@ def _layout_complete(
         entries=exported["entries"],
         finalizations=exported["finalizations"],
     )
-    batch, failure, phase = _layout_replay(
-        session, generation, arguments, pending, defer_append=defer_append
+    batch, failure, phase, owner_proof = _layout_replay(
+        session,
+        generation,
+        arguments,
+        pending,
+        defer_append=defer_append,
+        combined_owners=combined_owners,
     )
     if failure is not None:
         return refused(failure, phase)
@@ -393,7 +439,15 @@ def _layout_complete(
         )
     except (ValueError, KeyError, TypeError, IndexError):
         return refused({"status": "conflict", "reason": "layout_replay_contract"}, "verify_replay")
-    proofs, failure = _layout_check_owners(session, generation, pending, exported, version, refused)
+    proofs, failure = _layout_check_owners(
+        session,
+        generation,
+        pending,
+        exported,
+        version,
+        refused,
+        observed=owner_proof if combined_owners else _OWNER_UNSET,
+    )
     if failure is not None:
         return failure
     try:
