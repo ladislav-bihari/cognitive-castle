@@ -31,6 +31,30 @@ def fixture():
     return layout, migration, reg, result, plan, envelope, target
 
 
+def test_direct_publication_reserves_its_separate_finalization_batch():
+    from cognitive_castle import lance_layout_codec as layout
+    from cognitive_castle import live_publication_codec as live
+    from test_live_registration import publication
+    from test_partitioned_exact_store import qualification_case
+
+    _, migration, qualification, envelope = qualification_case()
+    prepared = publication("body")
+    reg = migration.registration(
+        live.source_descriptor(prepared.intent), envelope["generation"]["path"]
+    )
+    counter = layout.LayoutPlanningCounters(qualification)
+    for row in prepared.entries:
+        counter.add_entry(row)
+    plan = counter.finish(
+        reg, prepared.manifest, "live", ["operator", "request"], separate_finalization=True
+    )
+    assert len(list(live.batches(prepared))) == 2
+    assert plan["expansion"]["batches"] == 2
+    assert plan["expansion"]["fragments"] == 2
+    # All input rows + owner/live-alias + one receipt for each physical batch.
+    assert plan["expansion"]["physical_rows"] == len(prepared.entries) + 4
+
+
 def test_layout_versions_preserve_v1_job_and_source_domains():
     layout, migration, reg, result, _, _, target = fixture()
     before = copy.deepcopy(reg)
