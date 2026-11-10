@@ -187,6 +187,66 @@ def test_selected_native_ordinary_page_preserves_hash_offsets_and_controls(monke
     )
 
 
+def test_selected_native_status_reads_only_pinned_metadata_and_reports_partial_coverage(
+    monkeypatch,
+):
+    import hashlib
+    from cognitive_castle import semantic_runtime, memory_runtime
+    from cognitive_castle.memory_selection import load_selection
+    from cognitive_castle.migration_codec import hashed
+    from test_layout_native_integration import _start, _record
+
+    root, _ = _handoff()
+
+    def snapshots():
+        return {
+            str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+            for folder in (root / "control", root / "generation/coordination")
+            for path in folder.iterdir()
+            if path.is_file()
+        }
+
+    before = snapshots()
+    original = semantic_runtime.SemanticSession._run_stage
+    calls = []
+
+    def observe(self, request, **limits):
+        operation = request["operation"]
+        assert operation in {"control_status", "queue_status", "coverage"}
+        assert (limits["cap"], limits["rss"], limits["total"]) == (2, 128 * 1024**2, 192 * 1024**2)
+        if operation == "queue_status":
+            assert request["arguments"]["envelope_hash"] == hashed(
+                load_selection(root / "palace")["envelope"]
+            )
+        calls.append(operation)
+        previous = len(self.resources)
+        number = _start("queue_selected_status_" + operation)
+        result = original(self, request, **limits)
+        _record(self, "queue_selected_status_" + operation, result, previous, number)
+        return result
+
+    monkeypatch.setattr(semantic_runtime.SemanticSession, "_run_stage", observe)
+    start = time.monotonic()
+    result = memory_runtime.run_memory(root / "palace", "status", dict(after=0, limit=2))
+    elapsed = time.monotonic() - start
+    print("SELECTED_STATUS_OPERATION " + json.dumps(dict(seconds=elapsed)), flush=True)
+    assert elapsed <= 2 and result["status"] == "ok", result
+    assert calls == ["control_status", "queue_status", "coverage"]
+    assert (
+        result["indexed_chunks"] == 1 and result["canonical"]["count_basis"] == "registered_claims"
+    )
+    assert result["canonical"]["native_rows_rechecked"] is False
+    assert result["observations"] == [] and result["next_after"] is None
+    assert (
+        result["coverage_detail"]["complete"] is False
+        and result["semantic"]["coverage_complete"] is False
+    )
+    assert snapshots() == before
+    assert not {"sqlite3", "lance", "lancedb", "pyarrow", "numpy", "torch"}.intersection(
+        sys.modules
+    )
+
+
 def test_selected_control_discovery_reopens_and_finds_new_earlier_names(monkeypatch):
     from cognitive_castle import memory_runtime, semantic_runtime
     from test_layout_native_integration import _start, _record
