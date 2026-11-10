@@ -392,7 +392,16 @@ class LayoutDirectory:
                 if stop_partition is not None:
                     break
                 _conflict()
-            total = {k: usage[k] + plan["expansion"][k] for k in codec.EXPANSION}
+            # Workers share one serialized temporary workspace. Retained spill
+            # is separately charged from actual files before/after native I/O;
+            # it is not another permanent workspace for every owner. Keep any
+            # older cumulative reservation as a conservative high-water mark.
+            total = {
+                k: max(usage[k], plan["expansion"][k])
+                if k == "temp_bytes"
+                else usage[k] + plan["expansion"][k]
+                for k in codec.EXPANSION
+            }
             if any(total[k] > envelope["limits"][k] for k in codec.EXPANSION):
                 partition += 1
                 total = dict(plan["expansion"])

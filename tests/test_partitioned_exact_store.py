@@ -109,6 +109,36 @@ def qualification_case():
     return layout, migration, value, envelope
 
 
+def test_shared_workspace_still_refuses_actual_retained_spill_overflow(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from cognitive_castle import partitioned_exact_store as module
+    from cognitive_castle.lance_exact_store import _StoreError
+
+    _, _, qualification, envelope = qualification_case()
+    root = tmp_path.resolve() / "generation"
+    temporary = root / "exact/tmp"
+    temporary.mkdir(parents=True, mode=0o700)
+    envelope["generation"]["path"] = str(root)
+    authority = SimpleNamespace(qualification=qualification, envelope=envelope)
+    for name in ("LANCE_MEM_POOL_SIZE", "LANCE_MAX_TEMP_DIRECTORY_SIZE", "TMPDIR"):
+        monkeypatch.setenv(name, "original")
+    monkeypatch.delenv("LANCE_BYPASS_SPILLING", raising=False)
+    monkeypatch.setattr(module.tempfile, "tempdir", None)
+    spill = temporary / "retained-spill"
+    spill.touch(mode=0o600)
+    with spill.open("r+b") as stream:
+        stream.truncate(512 * 1024)
+    module._temporary_charge(authority)
+    assert os.environ["LANCE_MAX_TEMP_DIRECTORY_SIZE"] == "65536"
+    # Even one shared working reservation must include all retained spill.
+    # Sparse files count by logical size as well as allocated blocks.
+    with spill.open("r+b") as stream:
+        stream.truncate(1024 * 1024)
+    with pytest.raises(_StoreError):
+        module._temporary_charge(authority)
+
+
 def test_partition_protocol_qualification_requires_independent_frozen_hash():
     layout, migration, value, envelope = qualification_case()
     expected = migration.hashed(value)
