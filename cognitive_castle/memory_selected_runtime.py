@@ -11,7 +11,12 @@ from .canonical_records import prepare_remember
 from .capture_control_runtime import CaptureControlClient
 from .live_publication_codec import prepare_publication
 from . import live_publication, migration_codec, semantic_runtime
-from .memory_selection import load_selection, SelectionUnavailable
+from .memory_selection import (
+    load_selection,
+    SelectionUnavailable,
+    SelectionBusy,
+    selection_lease,
+)
 
 SUPPORTED = {
     "remember",
@@ -150,6 +155,16 @@ def run_selected(palace, selected, operation, arguments, *, until, background):
         return dict(status="unavailable", reason="canonical_route_not_ready")
     if not _current(palace, selected):
         return dict(status="unavailable", reason="canonical_selection_changed")
+    try:
+        with selection_lease(palace, selected):
+            return _run_leased(palace, selected, operation, arguments, until, background)
+    except SelectionBusy:
+        return dict(status="unavailable", reason="canonical_selection_busy")
+    except SelectionUnavailable:
+        return dict(status="unavailable", reason="canonical_selection_changed")
+
+
+def _run_leased(palace, selected, operation, arguments, until, background):
     with semantic_runtime.SemanticSession(
         Path(selected["profile"]["path"]), interactive=not background
     ) as session:

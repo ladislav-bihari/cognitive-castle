@@ -5,6 +5,7 @@ and must never be interpreted as permission to fall back to an older backend.
 Metadata pins do not establish native health, corpus coverage or model quality.
 """
 
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import stat
@@ -21,6 +22,57 @@ MAX_BYTES = 16384
 
 class SelectionUnavailable(ValueError):
     pass
+
+
+class SelectionBusy(SelectionUnavailable):
+    """An active canonical operation or cooperating selector owns the lease."""
+
+
+@contextmanager
+def selection_lease(palace, expected, *, exclusive=False):
+    """Pin the existing private metadata directory without creating lock files.
+
+    Operations hold a shared lease; a cooperating operator selector must hold
+    the exclusive lease across validation and publication. Both are nonblocking.
+    This alone does not implement or authorize an activation/rollback writer.
+    """
+    if type(exclusive) is not bool:
+        raise ValueError("selection lease mode")
+    fd = None
+    try:
+        import fcntl
+
+        directory = Path(palace).absolute() / ".memory"
+        before = _directory(directory)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened = os.fstat(fd)
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError("selection directory changed")
+        try:
+            fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SelectionBusy("canonical selection busy") from None
+        after = _directory(directory)
+        if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino) or load_selection(
+            palace
+        ) != expected:
+            raise ValueError("selection changed before lease")
+    except SelectionBusy:
+        if fd is not None:
+            os.close(fd)
+        raise
+    except (OSError, ValueError, AttributeError, ImportError):
+        if fd is not None:
+            os.close(fd)
+        raise SelectionUnavailable("canonical selection lease unavailable") from None
+    except BaseException:
+        if fd is not None:
+            os.close(fd)
+        raise
+    try:
+        yield
+    finally:
+        os.close(fd)
 
 
 def _parents(path):

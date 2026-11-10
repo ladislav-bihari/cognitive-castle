@@ -10,7 +10,12 @@ import math
 from pathlib import Path
 import time
 
-from .memory_selection import SelectionUnavailable, load_selection
+from .memory_selection import (
+    SelectionUnavailable,
+    SelectionBusy,
+    load_selection,
+    selection_lease,
+)
 from .memory_selected_runtime import layout_hash
 from .semantic_indexer import index_one
 from .semantic_runtime import LayoutSemanticSession
@@ -71,6 +76,16 @@ def index_tick(palace, *, diagnostic=False, max_seconds=5):
         return dict(status="unavailable", reason="canonical_selection_required")
     if time.monotonic() >= until:
         return dict(status="unavailable", reason="semantic_deadline")
+    try:
+        with selection_lease(palace, selected):
+            return _index_leased(palace, selected, until)
+    except SelectionBusy:
+        return dict(status="unavailable", reason="canonical_selection_busy")
+    except SelectionUnavailable:
+        return dict(status="unavailable", reason="canonical_selection_changed")
+
+
+def _index_leased(palace, selected, until):
     with SelectedIndexSession(palace, selected) as session:
         session._until = min(session._until, until)
         refusal = session._ready()

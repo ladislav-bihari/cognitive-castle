@@ -85,6 +85,11 @@ def test_tick_runs_once_in_background_preserves_pending_and_closes(monkeypatch, 
     pending = dict(status="in_progress", state="verification_pending", position=0)
 
     def index_one(session, generation):
+        from cognitive_castle.memory_selection import selection_lease, SelectionBusy
+
+        with pytest.raises(SelectionBusy):
+            with selection_lease(palace, selected, exclusive=True):
+                pytest.fail("operator switched generation during background indexing")
         assert session._until == 102.0
         assert generation == Path(selected["envelope"]["generation"]["path"])
         events.append("index")
