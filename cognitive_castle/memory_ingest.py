@@ -175,7 +175,7 @@ def _observation(
     return value
 
 
-def _publish_piece(store, request, piece, provenance, on_published, on_prepared):
+def _publish_piece(store, request, piece, provenance, on_published, on_prepared, publisher=None):
     prepared = prepare_remember(request, piece, provenance, namespace="transcript")
     if on_prepared is not None:
         reserved = on_prepared(prepared)
@@ -183,7 +183,18 @@ def _publish_piece(store, request, piece, provenance, on_published, on_prepared)
             return dict(status="unavailable")
         if reserved.get("status") != "ok":
             return reserved
-    receipt = store.remember(request, piece, provenance, namespace="transcript")
+    target = store.remember if publisher is None else publisher
+    receipt = target(request, piece, provenance, namespace="transcript")
+    if not isinstance(receipt, dict):
+        return dict(status="unavailable", reason="publication_result")
+    if receipt.get("status") == "prepared":
+        if (
+            publisher is None
+            or not isinstance(receipt.get("preparation"), dict)
+            or not receipt["preparation"]
+        ):
+            return dict(status="unavailable", reason="publication_preparation")
+        return receipt
     if receipt.get("status") != "ok":
         return receipt
     try:
@@ -203,6 +214,16 @@ def _publish_piece(store, request, piece, provenance, on_published, on_prepared)
         return dict(status="unavailable", reason="publication_receipt")
 
 
+def _validate_publication_route(format, on_published, on_prepared, publisher):
+    if format not in ("codex", "claude") or any(
+        observer is not None and not callable(observer)
+        for observer in (on_published, on_prepared, publisher)
+    ):
+        raise ValueError("unsupported transcript format or invalid publication observer")
+    if publisher is not None and (on_prepared is None or on_published is None):
+        raise ValueError("external publisher requires publication observers")
+
+
 def ingest_slice(
     store,
     path: Path,
@@ -211,6 +232,7 @@ def ingest_slice(
     format: str,
     on_published=None,
     on_prepared=None,
+    publisher=None,
 ) -> dict:
     """Ingest a bounded slice under a caller-selected trusted registered root.
 
@@ -219,14 +241,11 @@ def ingest_slice(
     An optional trusted observer receives the prepared request and verified
     receipt before the piece checkpoint. A refusal leaves that piece replayable.
     A trusted preparation observer can reserve body-free intent before append.
+    An external publisher requires both observers. It may yield a nonempty
+    preparation object without confirming text or advancing that piece; the
+    caller can publish outside the control worker and replay with actual proof.
     """
-    if format not in ("codex", "claude") or (
-        any(
-            observer is not None and not callable(observer)
-            for observer in (on_published, on_prepared)
-        )
-    ):
-        raise ValueError("unsupported transcript format or invalid publication observer")
+    _validate_publication_route(format, on_published, on_prepared, publisher)
     deadline = time.monotonic() + 0.250
     opened, info, path = _open_source(path, allowed_root)
     with opened:
@@ -412,8 +431,21 @@ def ingest_slice(
                                 f"{key}:{generation}:{start}:{record_hash}:{block['block']}:{piece_start}".encode()
                             )
                             receipt = _publish_piece(
-                                store, request, piece, provenance, on_published, on_prepared
+                                store,
+                                request,
+                                piece,
+                                provenance,
+                                on_published,
+                                on_prepared,
+                                publisher=publisher,
                             )
+                            if receipt.get("status") == "prepared":
+                                return dict(
+                                    status="prepared",
+                                    coverage="partial",
+                                    source_key=key,
+                                    preparation=receipt["preparation"],
+                                )
                             if receipt.get("status") != "ok":
                                 outcome = receipt.get("status")
                                 if outcome not in {
