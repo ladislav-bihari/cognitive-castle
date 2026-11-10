@@ -24,6 +24,18 @@ def write(path, value):
     path.chmod(0o400)
 
 
+def select(marker, value):
+    write(marker, value)
+    write(
+        marker.with_name("canonical-backend.json"),
+        dict(
+            format="castle-canonical-backend-v1",
+            backend="lance",
+            selection_hash=_hash(_json(value)),
+        ),
+    )
+
+
 def fixture(tmp_path):
     palace = (tmp_path / "palace").resolve()
     palace.mkdir(mode=0o700)
@@ -62,7 +74,7 @@ def fixture(tmp_path):
         room="conversations",
     )
     marker = memory / "canonical-selection.json"
-    write(marker, value)
+    select(marker, value)
     return palace, marker, value
 
 
@@ -71,6 +83,21 @@ def test_absent_selection_does_not_create_storage(tmp_path):
     palace.mkdir(mode=0o700)
     assert api().load_selection(palace) is None
     assert list(palace.iterdir()) == []
+
+
+def test_declared_lance_backend_with_missing_selection_cannot_fall_back(tmp_path):
+    palace, marker, value = fixture(tmp_path)
+    write(
+        marker.with_name("canonical-backend.json"),
+        dict(
+            format="castle-canonical-backend-v1",
+            backend="lance",
+            selection_hash=_hash(_json(value)),
+        ),
+    )
+    marker.unlink()
+    with pytest.raises(api().SelectionUnavailable):
+        api().load_selection(palace)
 
 
 @pytest.mark.parametrize("kind", ["absent", "file"])
@@ -110,7 +137,7 @@ def test_invalid_selected_authority_never_looks_like_absent_config(tmp_path, cha
     else:
         value["envelope"]["generation"]["inode"] += 1
     marker.chmod(0o600)
-    write(marker, value)
+    select(marker, value)
     with pytest.raises(api().SelectionUnavailable):
         api().load_selection(palace)
 
