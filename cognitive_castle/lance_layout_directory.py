@@ -154,7 +154,7 @@ class LayoutDirectory:
             indexes = indexes | semantic_schedule.INDEXES
         maximum = len(BASE_TABLES) + len(tables) + len(indexes)
         lengths = self.conn.execute(
-            "SELECT length(CAST(name AS BLOB)),length(CAST(type AS BLOB)),length(CAST(sql AS BLOB)) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT ?",
+            "SELECT length(CAST(name AS BLOB)),length(CAST(type AS BLOB)),length(CAST(sql AS BLOB)) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT ?",
             (maximum + 1,),
         ).fetchall()
         if len(lengths) != maximum or any(
@@ -163,7 +163,7 @@ class LayoutDirectory:
         ):
             raise _StoreError("unavailable")
         rows = self.conn.execute(
-            "SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT ?",
+            "SELECT name,type,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT ?",
             (maximum + 1,),
         ).fetchall()
         if len(rows) != maximum:
