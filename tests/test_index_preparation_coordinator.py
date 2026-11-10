@@ -205,3 +205,45 @@ def test_registered_preparation_hooks_use_same_guarded_operations(monkeypatch):
     )
     assert group == saved
     assert (limit["cap"], limit["rss"], limit["total"]) == (2, 192 * 1024**2, 256 * 1024**2)
+
+
+@pytest.mark.parametrize("refused", [False, True])
+def test_operator_yields_after_outbox_proof_before_starting_a_model_page(refused):
+    from cognitive_castle.semantic_indexer import index_one
+    from cognitive_castle.semantic_profile import digest
+    from test_semantic_indexer import intent
+
+    pending = intent()
+    completed = []
+
+    class Session:
+        _defer_index_after_recovery = True
+        resources = []
+
+        def prepare_index(self, directory):
+            return dict(status="ok", intents=[pending], selection=None)
+
+        def verify_intent(self, directory, value):
+            if refused:
+                return dict(status="unavailable", reason="worker_deadline")
+            return dict(
+                status="ok",
+                intent_binding=digest(value),
+                digest=value["digest"],
+                receipt=value["receipt"],
+            )
+
+        def store(self, directory, operation, arguments):
+            assert operation == "queue_intent_complete", "outbox tick must yield before selection"
+            completed.append(arguments["intent_id"])
+            return dict(status="ok")
+
+    result = index_one(Session(), Path("/registered/generation"))
+    if refused:
+        assert result["status"] == "unavailable" and result["reason"] == "worker_deadline"
+        assert result["phase"] == "intent_recovery" and completed == []
+        assert len(result["intent_recovery"]["pending"]) == 1
+    else:
+        assert result["status"] == "in_progress" and result["state"] == "exact_outbox_recovered"
+        assert result["intent_recovery"] == dict(status="ok", recovered=1, pending=[])
+        assert completed == [pending["intent_id"]]

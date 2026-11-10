@@ -151,6 +151,48 @@ class ExactPublication(SemanticSession):
         }
 
 
+def _invalid_index_preparation(control):
+    malformed = (
+        set(control) != {"status", "intents", "selection"}
+        or not isinstance(control["intents"], list)
+        or len(control["intents"]) > 2
+        or control["intents"]
+        and control["selection"] is not None
+        or not control["intents"]
+        and not isinstance(control["selection"], dict)
+    )
+    if not malformed and not control["intents"] and control["selection"].get("status") == "ok":
+        chosen = control["selection"].get("group")
+        malformed = (
+            not isinstance(chosen, dict)
+            or not {
+                "batch_key",
+                "references",
+                "profile",
+                "input_binding",
+                "position",
+                "total_units",
+            }
+            <= chosen.keys()
+        )
+    return malformed
+
+
+def _deferred_recovery_result(session, intents, recovery):
+    if (
+        not intents
+        or getattr(session, "_defer_index_after_recovery", False) is not True
+        or recovery.get("status") != "ok"
+    ):
+        return None
+    base = dict(phase="intent_recovery", intent_recovery=recovery, resources=session.resources)
+    if recovery["pending"]:
+        # Keep the actual proof refusal visible; do not spend what is left of
+        # this lease selecting or embedding unrelated work.
+        return {**base, **recovery["pending"][0]}
+    return dict(base, status="in_progress", state="exact_outbox_recovered")
+
+
 def index_one(session, directory):
     """One bounded indexing step; committed pages recover without re-inference."""
     selected = None
@@ -161,30 +203,7 @@ def index_one(session, directory):
         control = prepare(directory)
         if control.get("status") != "ok":
             return {**control, "phase": "intent_recovery", "resources": session.resources}
-        malformed = (
-            set(control) != {"status", "intents", "selection"}
-            or not isinstance(control["intents"], list)
-            or len(control["intents"]) > 2
-            or control["intents"]
-            and control["selection"] is not None
-            or not control["intents"]
-            and not isinstance(control["selection"], dict)
-        )
-        if not malformed and not control["intents"] and control["selection"].get("status") == "ok":
-            chosen = control["selection"].get("group")
-            malformed = (
-                not isinstance(chosen, dict)
-                or not {
-                    "batch_key",
-                    "references",
-                    "profile",
-                    "input_binding",
-                    "position",
-                    "total_units",
-                }
-                <= chosen.keys()
-            )
-        if malformed:
+        if _invalid_index_preparation(control):
             return dict(
                 status="corrupt",
                 reason="invalid_index_preparation",
@@ -194,6 +213,9 @@ def index_one(session, directory):
         recovery = _recover_pending(
             session, directory, dict(status="ok", intents=control["intents"])
         )
+        deferred = _deferred_recovery_result(session, control["intents"], recovery)
+        if deferred is not None:
+            return deferred
         selected = control["selection"]
     if recovery.get("status") != "ok":
         return {**recovery, "phase": "intent_recovery", "resources": session.resources}

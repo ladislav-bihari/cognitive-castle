@@ -46,6 +46,7 @@ EXTRA = {
     "test_worker_plugin_policy.py",
     "test_selected_status.py",
     "test_ci_test_partition.py",
+    "test_operator_index_native.py",
 }
 
 

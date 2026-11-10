@@ -24,6 +24,8 @@ from .semantic_runtime import LayoutSemanticSession
 class SelectedIndexSession(LayoutSemanticSession):
     """Revalidate the frozen operator selection before each supervised stage."""
 
+    _defer_index_after_recovery = True
+
     def __init__(self, palace, selected):
         self.palace = Path(palace)
         # The loaded snapshot belongs to this invocation, not to caller mutation.

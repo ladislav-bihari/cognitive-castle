@@ -47,6 +47,7 @@ def test_partition_is_disjoint_exhaustive_and_keeps_legacy_backend_tests():
         "test_index_prepare_upgrade_native.py",
         "test_index_background_native.py",
         "test_index_coordinator.py",
+        "test_operator_index_native.py",
         "test_memory_selection_lease.py",
         "test_exact_read_timing_native.py",
         "test_worker_plugin_policy.py",
