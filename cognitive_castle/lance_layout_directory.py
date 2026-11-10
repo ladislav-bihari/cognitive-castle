@@ -930,16 +930,13 @@ def _empty_pins(envelope):
     return pins
 
 
-def _register_layout_authority(conn, job_id, envelope, qualification, *, expected_hash):
+def _prepare_layout_authority(conn, envelope, qualification, *, expected_hash):
     """Private root-bound fresh setup, never an ordinary worker request setter.
 
     Filesystem artifacts deliberately survive a failed SQL commit. An artifact
     without authority requires protected restoration; this function never repairs.
     """
     codec.validate_qualification(qualification, envelope, expected_hash=expected_hash)
-    from .semantic_queue import SemanticQueue
-
-    bulk.sha(job_id)
     if not conn.in_transaction:
         raise _StoreError("unavailable")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -947,24 +944,9 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
         registered = _NativeLayoutDirectory(conn)
         if registered.envelope != envelope or registered.qualification != qualification:
             _conflict()
-        if registered.attachment(job_id) is None:
-            row = SemanticQueue._migration_row(conn, job_id)
-            reg = migration.validate_registration(_metadata(row["registration"]))
-            validate_first_bind(row, reg)
-            if reg["destination"] != envelope["generation"]["path"]:
-                _conflict()
-            marker = dict(format=codec.ATTACHMENT, envelope_hash=migration.hashed(envelope))
-            conn.execute("INSERT INTO layout_jobs VALUES (?,?)", (job_id, canonical_json(envelope)))
-            conn.execute(
-                "UPDATE migration_jobs SET layout_attachment=? WHERE job_id=?",
-                (canonical_json(marker), job_id),
-            )
         return dict(status="ok", epoch=registered.epoch)
     if version != 3:
         raise _StoreError("unavailable")
-    row = SemanticQueue._migration_row(conn, job_id)
-    reg = migration.validate_registration(_metadata(row["registration"]))
-    validate_first_bind(row, reg)
     jobs = conn.execute(
         "SELECT CASE WHEN length(CAST(job_id AS BLOB))=64 THEN job_id END,pending IS NOT NULL OR last_ack IS NOT NULL OR last_refusal IS NOT NULL OR owner_references<>0 OR semantic_pending<>0 OR state<>'active' FROM migration_jobs LIMIT 257"
     ).fetchall()
@@ -974,18 +956,14 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
         raise _StoreError("unavailable")
     directory = LayoutDirectory(conn)
     directory._identity(envelope)
-    if (
-        reg["destination"] != envelope["generation"]["path"]
-        or conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'layout_%' LIMIT 1").fetchone()
-    ):
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'layout_%' LIMIT 1").fetchone():
         _conflict()
     pins = _empty_pins(envelope)
     for pin in pins.values():
         codec.validate_partition_pin(pin, qualification, envelope)
     epoch = migration.hashed(["lance-layout-authority-v1", envelope, pins])
-    marker = dict(format=codec.ATTACHMENT, envelope_hash=migration.hashed(envelope))
-    migration.bounded(dict(job_id=job_id, envelope=envelope, pins=pins, epoch=epoch))
-    artifact = Path(reg["destination"]) / "exact/layout-qualification.json"
+    migration.bounded(dict(envelope=envelope, pins=pins, epoch=epoch))
+    artifact = Path(envelope["generation"]["path"]) / "exact/layout-qualification.json"
     raw = canonical_json(qualification).encode()
     if len(raw) > 64 * 1024:
         raise ValueError("qualification artifact bytes")
@@ -1005,11 +983,6 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
     conn.execute("ALTER TABLE migration_jobs ADD COLUMN layout_attachment TEXT")
     for sql in (*DDL.values(), *INDEXES.values(), *NATIVE_DDL.values(), *NATIVE_INDEXES.values()):
         conn.execute(sql)
-    conn.execute("INSERT INTO layout_jobs VALUES (?,?)", (job_id, canonical_json(envelope)))
-    conn.execute(
-        "UPDATE migration_jobs SET layout_attachment=? WHERE job_id=?",
-        (canonical_json(marker), job_id),
-    )
     conn.execute(
         "INSERT INTO layout_authority VALUES (1,?,?,?,1)",
         (canonical_json(envelope), expected_hash, epoch),
@@ -1023,6 +996,38 @@ def _register_layout_authority(conn, job_id, envelope, qualification, *, expecte
         )
     conn.execute("PRAGMA user_version=5")
     return dict(status="ok", epoch=epoch)
+
+
+def _register_layout_authority(conn, job_id, envelope, qualification, *, expected_hash):
+    """Compatible private operator setup plus attachment of a real source job."""
+    from .semantic_queue import SemanticQueue
+
+    codec.validate_qualification(qualification, envelope, expected_hash=expected_hash)
+    bulk.sha(job_id)
+    if not conn.in_transaction:
+        raise _StoreError("unavailable")
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version not in (3, 5):
+        raise _StoreError("unavailable")
+    if version == 5:
+        registered = _NativeLayoutDirectory(conn)
+        if registered.envelope != envelope or registered.qualification != qualification:
+            _conflict()
+        if registered.attachment(job_id) is not None:
+            return dict(status="ok", epoch=registered.epoch)
+    row = SemanticQueue._migration_row(conn, job_id)
+    reg = migration.validate_registration(_metadata(row["registration"]))
+    validate_first_bind(row, reg)
+    if reg["destination"] != envelope["generation"]["path"]:
+        _conflict()
+    result = _prepare_layout_authority(conn, envelope, qualification, expected_hash=expected_hash)
+    marker = dict(format=codec.ATTACHMENT, envelope_hash=migration.hashed(envelope))
+    conn.execute("INSERT INTO layout_jobs VALUES (?,?)", (job_id, canonical_json(envelope)))
+    conn.execute(
+        "UPDATE migration_jobs SET layout_attachment=? WHERE job_id=?",
+        (canonical_json(marker), job_id),
+    )
+    return result
 
 
 class _NativeLayoutDirectory(LayoutDirectory):
