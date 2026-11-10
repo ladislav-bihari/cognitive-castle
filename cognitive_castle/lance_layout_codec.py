@@ -577,15 +577,19 @@ class LayoutPlanningCounters:
         self.current_encoded += encoded
         self.total_encoded += encoded
 
-    def finish(self, reg, manifest, phase, source_key):
+    def finish(self, reg, manifest, phase, source_key, *, separate_finalization=False):
         if self.finished:
             raise ValueError("finished owner planning")
+        if type(separate_finalization) is not bool:
+            raise ValueError("owner finalization policy")
         bulk.validate_owner(manifest)
         if (
             self.entries
             != sum(f["pages"] for f in manifest["fields"].values()) + 2 * manifest["members"]
         ):
             raise ValueError("planning complete original expansion")
+        if separate_finalization and self.current_entries:
+            self._flush()
         decoded = len(_json(manifest).encode())
         encoded = len(json.dumps(manifest, ensure_ascii=True, allow_nan=False).encode())
 

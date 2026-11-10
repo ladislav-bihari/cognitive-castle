@@ -683,6 +683,97 @@ class SemanticQueue:
         except (OSError, sqlite3.DatabaseError, ValueError, KeyError, TypeError):
             return {"status": "unavailable"}
 
+    def live_open(self, intent, envelope_hash):
+        """Atomically register body-free work in an existing operator-pinned root.
+
+        This is coordination, not exact publication or a successful remember
+        receipt. No schema/authority creation, append, or semantic ACK occurs.
+        """
+        from . import live_publication_codec as live
+        from . import migration_codec as codec
+        from .lance_layout_codec import ATTACHMENT
+        from .lance_layout_directory import _NativeLayoutDirectory
+
+        live.validate_intent(intent)
+        validate_hash(envelope_hash)
+        # Freeze caller-owned metadata before deriving either durable binding.
+        intent = json.loads(canonical_json(intent))
+        live.validate_intent(intent)
+        reg = codec.registration(live.source_descriptor(intent), str(self.generation))
+        encoded = canonical_json(reg)
+        semantic = intent["semantic"]
+        semantic_json, semantic_binding = canonical_json(semantic), digest(semantic)
+        try:
+            _require_supervision()
+        except _StoreError as exc:
+            return {"status": exc.status}
+        import sqlite3
+
+        try:
+            # Unlike _run, this path never creates or upgrades coordination state.
+            with self._layout_resume_connection() as conn:
+                directory = _NativeLayoutDirectory(conn)
+                if codec.hashed(directory.envelope) != envelope_hash:
+                    raise _StoreError("conflict")
+                old = conn.execute(
+                    "SELECT 1 FROM migration_jobs WHERE job_id=?", (reg["job_id"],)
+                ).fetchone()
+                if old is not None:
+                    row = self._migration_row(conn, reg["job_id"])
+                    if row["registration"] != encoded:
+                        raise _StoreError("conflict")
+                    if directory.attachment(reg["job_id"]) is None:
+                        raise _StoreError("unavailable")
+                pending = conn.execute(
+                    "SELECT CASE WHEN typeof(binding)='text' AND length(CAST(binding AS BLOB))=64 THEN binding END AS binding,CASE WHEN typeof(intent_json)='text' AND length(CAST(intent_json AS BLOB))<=196608 THEN intent_json END AS intent_json,complete FROM intents WHERE intent_id=?",
+                    (semantic["intent_id"],),
+                ).fetchone()
+                if pending is not None:
+                    if (
+                        pending["binding"] is None
+                        or pending["intent_json"] is None
+                        or type(pending["complete"]) is not int
+                        or pending["complete"] not in (0, 1)
+                    ):
+                        raise _StoreError("unavailable")
+                    if (
+                        pending["binding"] != semantic_binding
+                        or pending["intent_json"] != semantic_json
+                    ):
+                        raise _StoreError("conflict")
+                if old is None:
+                    before = canonical_json(codec.initial_source_cursor(reg))
+                    marker = canonical_json(dict(format=ATTACHMENT, envelope_hash=envelope_hash))
+                    conn.execute(
+                        "INSERT INTO migration_jobs(job_id,registration,staging_cursor,completed_frontier,counts,coverage,state,layout_attachment) VALUES (?,?,?,?,?,'incomplete','active',?)",
+                        (
+                            reg["job_id"],
+                            encoded,
+                            before,
+                            before,
+                            canonical_json(codec.empty_counts()),
+                            marker,
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO layout_jobs VALUES (?,?)",
+                        (reg["job_id"], canonical_json(directory.envelope)),
+                    )
+                if pending is None:
+                    conn.execute(
+                        "INSERT INTO intents(intent_id,binding,intent_json) VALUES (?,?,?)",
+                        (semantic["intent_id"], semantic_binding, semantic_json),
+                    )
+                # Validation/response construction belongs inside the transaction:
+                # any refusal must roll back *all* newly registered rows.
+                return self._layout_state(conn, reg["job_id"], directory)
+        except _StoreError as exc:
+            return {"status": exc.status}
+        except sqlite3.OperationalError as exc:
+            return {"status": "busy" if "locked" in str(exc) else "unavailable"}
+        except (OSError, sqlite3.DatabaseError, ValueError, KeyError, TypeError):
+            return {"status": "unavailable"}
+
     def migration_prepare(self, job_id, expected_cursor, intent):
         from . import migration_codec as codec
 
