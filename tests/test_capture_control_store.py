@@ -214,3 +214,21 @@ def test_control_operator_validates_path_before_any_creation(tmp_path, monkeypat
     monkeypatch.setattr(Path, "mkdir", forbidden)
     with pytest.raises(ValueError):
         api().initialize_capture_control(path, max_bytes=3 * 1024**2)
+
+
+def test_control_checkpoint_accepts_unconfirmed_record_reservation():
+    from cognitive_castle.capture_state_codec import validate_checkpoint
+
+    value = checkpoint()
+    value["pending"] = dict(hash="b" * 64, cursor=[-1, 0])
+    assert validate_checkpoint(value) == value
+
+
+@pytest.mark.parametrize("cursor", [[-1, 1], [-2, 0], [True, 0], [0, True], [-1.0, 0], [0, 1.0]])
+def test_control_checkpoint_rejects_invalid_reservation_cursors(cursor):
+    from cognitive_castle.capture_state_codec import validate_checkpoint
+
+    value = checkpoint()
+    value["pending"] = dict(hash="b" * 64, cursor=cursor)
+    with pytest.raises(ValueError):
+        validate_checkpoint(value)

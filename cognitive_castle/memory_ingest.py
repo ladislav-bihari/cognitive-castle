@@ -224,6 +224,14 @@ def _validate_publication_route(format, on_published, on_prepared, publisher):
         raise ValueError("external publisher requires publication observers")
 
 
+def _reserve_external_record(store, key, checkpoint, record_hash, *, enabled):
+    if enabled and not checkpoint.get("pending"):
+        # Record observation is not confirmation of any piece. Keeping it in
+        # parser state prevents ordinary failure writes from erasing the hash.
+        checkpoint["pending"] = {"hash": record_hash, "cursor": [-1, 0]}
+        store.save_checkpoint(key, checkpoint)
+
+
 def ingest_slice(
     store,
     path: Path,
@@ -402,6 +410,13 @@ def ingest_slice(
                                 )
                             ],
                         )
+                    _reserve_external_record(
+                        store,
+                        key,
+                        checkpoint,
+                        record_hash,
+                        enabled=publisher is not None and bool(messages),
+                    )
                     cursor = pending.get("cursor", [-1, 0]) if pending else [-1, 0]
                     for index, block in enumerate(messages):
                         if index < cursor[0]:

@@ -1,6 +1,7 @@
 """Real parser handoffs with metadata-only state; no SQLite/native/model host."""
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -77,7 +78,10 @@ def test_prepared_handoff_preserves_text_and_never_advances_piece_checkpoint(tmp
     assert first["status"] == "prepared" and first["coverage"] == "partial"
     assert first["preparation"]["text"] == text
     checkpoint = state.checkpoints[first["source_key"]]
-    assert checkpoint["offset"] == 0 and checkpoint.get("pending") is None
+    assert checkpoint["offset"] == 0
+    assert checkpoint["pending"] == dict(
+        hash=hashlib.sha256(path.read_bytes()).hexdigest(), cursor=[-1, 0]
+    )
     assert "HANDOFF_BODY" not in json.dumps(state.checkpoints)
     assert all(value["reason"] != "failed" for value in state.observations)
     replay = ingest_slice(

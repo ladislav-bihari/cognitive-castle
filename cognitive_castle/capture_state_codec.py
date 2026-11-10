@@ -120,6 +120,9 @@ def validate_checkpoint(value):
         cursor = pending["cursor"]
         if not isinstance(cursor, list) or len(cursor) != 2:
             raise ValueError("capture checkpoint cursor")
-        for item in cursor:
-            _number(item)
+        if any(type(item) is not int for item in cursor):
+            raise ValueError("capture checkpoint cursor type")
+        if cursor != [-1, 0]:
+            for item in cursor:
+                _number(item)
     return json.loads(_string(_json(value), 8192, "capture checkpoint"))
