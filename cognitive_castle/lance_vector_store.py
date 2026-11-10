@@ -585,6 +585,47 @@ class LanceVectorStore:
         except (OSError, RuntimeError):
             return {"status": "unavailable"}
 
+    def prepare(self, batch_key, references, input_binding, start_window):
+        """Read actual originals and the initial receipt in one cold process.
+
+        A later publication still requires an independent cold receipt read.
+        This read never initializes vector storage or mutates a queue position.
+        """
+        if not self.exact_layout:
+            raise ValueError("registered index preparation required")
+        _string(batch_key, MAX_BATCH_KEY_BYTES, "batch key")
+        validate_references(references)
+        validate_hash(input_binding)
+        if (
+            type(start_window) is not int
+            or not 0 <= start_window < MAX_TOTAL_UNITS
+            or start_window % 32
+        ):
+            raise ValueError("page start")
+        try:
+            actual = self._sources(references, input_binding)
+            receipt = self.receipt(batch_key=batch_key, start_window=start_window)
+            if receipt.get("status") == "ok":
+                validate_receipt(receipt)
+                if (
+                    receipt["batch_key"] != batch_key
+                    or receipt["input_binding"] != input_binding
+                    or receipt["reference_binding"] != digest(references)
+                    or receipt["start_window"] != start_window
+                ):
+                    return {"status": "conflict"}
+            elif receipt.get("status") not in {"not_found", "not_initialized"}:
+                return receipt
+            return dict(
+                status="ok",
+                sources=[actual[ref["canonical_id"]] for ref in references],
+                receipt=receipt,
+            )
+        except _StoreError as exc:
+            return {"status": exc.status}
+        except (OSError, RuntimeError):
+            return {"status": "unavailable"}
+
     def receipt(self, batch_key, start_window):
         _string(batch_key, MAX_BATCH_KEY_BYTES, "batch key")
         if (

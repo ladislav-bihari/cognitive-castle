@@ -325,6 +325,7 @@ class SemanticSession:
             "queue_layout_routes",
             "vector_receipt",
             "vector_layout_receipt",
+            "vector_layout_prepare",
             "vector_nearest",
         }
         return self._run_stage(
@@ -384,11 +385,31 @@ class LayoutSemanticSession(SemanticSession):
         self._directory(directory, self.generation)
         return self.exact(self.generation / "exact", "verify_intent", dict(intent=intent))
 
+    def prepare_index(self, directory):
+        return self.store(directory, "queue_prepare_index", {})
+
+    def prepare_group(self, directory, group):
+        return self.store(
+            directory,
+            "vector_layout_prepare",
+            dict(
+                batch_key=group["batch_key"],
+                references=group["references"],
+                input_binding=group["input_binding"],
+                start_window=group["position"],
+            ),
+        )
+
     def store(self, directory, operation, arguments):
         self._directory(directory, self.generation)
         if operation in {"vector_publish", "vector_receipt"}:
             operation = operation.replace("vector_", "vector_layout_", 1)
-        if operation in {"vector_layout_publish", "vector_layout_receipt"}:
+        if operation in {
+            "vector_layout_publish",
+            "vector_layout_receipt",
+            "vector_layout_prepare",
+            "queue_prepare_index",
+        }:
             if self.envelope_hash is not None:
                 arguments = dict(arguments, envelope_hash=self.envelope_hash)
         return super().store(directory, operation, arguments)

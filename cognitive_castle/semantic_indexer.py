@@ -71,6 +71,10 @@ def _recover_intent(session, directory, intent):
 def recover_intents(session, directory):
     """Recover at most two outbox requests; absence never advances a checkpoint."""
     pending = session.store(directory, "queue_intents", {})
+    return _recover_pending(session, directory, pending)
+
+
+def _recover_pending(session, directory, pending):
     if pending.get("status") == "not_initialized":
         return {"status": "ok", "recovered": 0, "pending": []}
     if pending.get("status") != "ok":
@@ -149,10 +153,52 @@ class ExactPublication(SemanticSession):
 
 def index_one(session, directory):
     """One fair queue page. A verified committed page never needs re-inference."""
-    recovery = recover_intents(session, directory)
+    selected = None
+    prepare = getattr(session, "prepare_index", None)
+    if prepare is None:
+        recovery = recover_intents(session, directory)
+    else:
+        control = prepare(directory)
+        if control.get("status") != "ok":
+            return {**control, "phase": "intent_recovery", "resources": session.resources}
+        malformed = (
+            set(control) != {"status", "intents", "selection"}
+            or not isinstance(control["intents"], list)
+            or len(control["intents"]) > 2
+            or control["intents"]
+            and control["selection"] is not None
+            or not control["intents"]
+            and not isinstance(control["selection"], dict)
+        )
+        if not malformed and not control["intents"] and control["selection"].get("status") == "ok":
+            chosen = control["selection"].get("group")
+            malformed = (
+                not isinstance(chosen, dict)
+                or not {
+                    "batch_key",
+                    "references",
+                    "profile",
+                    "input_binding",
+                    "position",
+                    "total_units",
+                }
+                <= chosen.keys()
+            )
+        if malformed:
+            return dict(
+                status="corrupt",
+                reason="invalid_index_preparation",
+                phase="intent_recovery",
+                resources=session.resources,
+            )
+        recovery = _recover_pending(
+            session, directory, dict(status="ok", intents=control["intents"])
+        )
+        selected = control["selection"]
     if recovery.get("status") != "ok":
         return {**recovery, "phase": "intent_recovery", "resources": session.resources}
-    selected = session.store(directory, "queue_select", {})
+    if selected is None:
+        selected = session.store(directory, "queue_select", {})
     if selected.get("status") != "ok":
         return {
             **selected,
@@ -170,14 +216,31 @@ def index_one(session, directory):
     def failed(result, phase):
         return {**base, **result, "phase": phase, "resources": session.resources}
 
-    hydrated = _hydrate(session, directory, group)
-    if hydrated.get("status") != "ok":
-        return failed(hydrated, "hydrate")
-    receipt = session.store(
-        directory,
-        "vector_receipt",
-        {"batch_key": group["batch_key"], "start_window": group["position"]},
-    )
+    prepare = getattr(session, "prepare_group", None)
+    if prepare is None:
+        hydrated = _hydrate(session, directory, group)
+        if hydrated.get("status") != "ok":
+            return failed(hydrated, "hydrate")
+        receipt = session.store(
+            directory,
+            "vector_receipt",
+            {"batch_key": group["batch_key"], "start_window": group["position"]},
+        )
+    else:
+        validate_references(group["references"])
+        if group["profile"] != PROFILE_ID:
+            return failed(dict(status="stale"), "hydrate")
+        prepared = prepare(directory, group)
+        if prepared.get("status") != "ok":
+            return failed(prepared, "prepare")
+        if set(prepared) != {"status", "sources", "receipt"} or not isinstance(
+            prepared["receipt"], dict
+        ):
+            return failed(dict(status="corrupt", reason="invalid_index_preparation"), "prepare")
+        hydrated = hydrate_group(group, prepared["sources"])
+        if hydrated.get("status") != "ok":
+            return failed(hydrated, "hydrate")
+        receipt = prepared["receipt"]
     recovered = receipt.get("status") == "ok"
     if not recovered:
         if receipt.get("status") not in {"not_found", "not_initialized"}:

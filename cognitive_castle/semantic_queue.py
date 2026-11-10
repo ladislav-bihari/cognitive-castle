@@ -318,36 +318,54 @@ class SemanticQueue:
 
         return self._run(True, register)
 
-    def select(self):
-        def select(conn):
-            streak = conn.execute("SELECT new_pages FROM schedule WHERE id=1").fetchone()[0]
-            lanes = {
-                lane: conn.execute(
-                    "SELECT * FROM groups WHERE lane=? AND state IN ('pending','inflight') ORDER BY CASE state WHEN 'inflight' THEN 0 ELSE 1 END,seq LIMIT 1",
-                    (lane,),
-                ).fetchone()
-                for lane in ("new", "history")
-            }
-            lane = (
-                "history"
-                if lanes["history"] is not None and (streak >= 3 or lanes["new"] is None)
-                else "new"
-            )
-            row = lanes[lane]
-            if row is None:
-                return {"status": "idle"}
-            conn.execute(
-                "UPDATE groups SET state='inflight' WHERE batch_key=?", (row["batch_key"],)
-            )
-            conn.execute(
-                "UPDATE schedule SET new_pages=? WHERE id=1",
-                (min(streak + 1, 3) if lane == "new" else 0,),
-            )
-            group = self._group(row)
-            group["state"] = "inflight"
-            return {"status": "ok", "group": group}
+    def _select_group(self, conn):
+        streak = conn.execute("SELECT new_pages FROM schedule WHERE id=1").fetchone()[0]
+        lanes = {
+            lane: conn.execute(
+                "SELECT * FROM groups WHERE lane=? AND state IN ('pending','inflight') ORDER BY CASE state WHEN 'inflight' THEN 0 ELSE 1 END,seq LIMIT 1",
+                (lane,),
+            ).fetchone()
+            for lane in ("new", "history")
+        }
+        lane = (
+            "history"
+            if lanes["history"] is not None and (streak >= 3 or lanes["new"] is None)
+            else "new"
+        )
+        row = lanes[lane]
+        if row is None:
+            return {"status": "idle"}
+        conn.execute("UPDATE groups SET state='inflight' WHERE batch_key=?", (row["batch_key"],))
+        conn.execute(
+            "UPDATE schedule SET new_pages=? WHERE id=1",
+            (min(streak + 1, 3) if lane == "new" else 0,),
+        )
+        group = self._group(row)
+        group["state"] = "inflight"
+        return {"status": "ok", "group": group}
 
-        return self._run(True, select)
+    def select(self):
+        return self._run(True, self._select_group)
+
+    def prepare_index(self, *, envelope_hash=None):
+        """Poll bounded intents or claim one ready page in one transaction."""
+        if envelope_hash is not None:
+            validate_hash(envelope_hash)
+
+        def prepare(conn):
+            if envelope_hash is not None:
+                from .lance_layout_directory import _NativeLayoutDirectory
+
+                if digest(_NativeLayoutDirectory(conn).envelope) != envelope_hash:
+                    return {"status": "conflict"}
+            pending = self._pending_intents(conn)
+            return dict(
+                status="ok",
+                intents=pending["intents"],
+                selection=None if pending["intents"] else self._select_group(conn),
+            )
+
+        return self._run(True, prepare)
 
     def acknowledge(self, batch_key, receipt):
         _string(batch_key, 128, "batch key")
@@ -494,18 +512,18 @@ class SemanticQueue:
 
         return self._run(True, prepare)
 
-    def intents(self):
-        def pending(conn):
-            cursor = conn.execute("SELECT intent_cursor FROM schedule WHERE id=1").fetchone()[0]
-            rows = conn.execute(
-                "SELECT seq,intent_json FROM intents WHERE complete=0 ORDER BY CASE WHEN seq>? THEN 0 ELSE 1 END,seq LIMIT 2",
-                (cursor,),
-            ).fetchall()
-            if rows:
-                conn.execute("UPDATE schedule SET intent_cursor=? WHERE id=1", (rows[-1]["seq"],))
-            return {"status": "ok", "intents": [json.loads(row["intent_json"]) for row in rows]}
+    def _pending_intents(self, conn):
+        cursor = conn.execute("SELECT intent_cursor FROM schedule WHERE id=1").fetchone()[0]
+        rows = conn.execute(
+            "SELECT seq,intent_json FROM intents WHERE complete=0 ORDER BY CASE WHEN seq>? THEN 0 ELSE 1 END,seq LIMIT 2",
+            (cursor,),
+        ).fetchall()
+        if rows:
+            conn.execute("UPDATE schedule SET intent_cursor=? WHERE id=1", (rows[-1]["seq"],))
+        return {"status": "ok", "intents": [json.loads(row["intent_json"]) for row in rows]}
 
-        return self._run(True, pending)
+    def intents(self):
+        return self._run(True, self._pending_intents)
 
     def intent_complete(self, intent_id, binding):
         validate_hash(intent_id)
