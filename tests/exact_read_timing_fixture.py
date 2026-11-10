@@ -1,11 +1,14 @@
 """Fixed read-only timing probe; only the archived synthetic receipt is allowed."""
 
+import atexit
 import builtins
 import json
 import os
 from pathlib import Path
 import sys
 import time
+
+_TRACE = {}
 
 
 def main():
@@ -37,6 +40,13 @@ def main():
                 ).encode(),
             )
 
+    _TRACE["mark"] = mark
+
+    def final_trace():
+        mark("atexit_end")
+        os.close(fd)
+
+    atexit.register(final_trace)
     mark("admitted")
     corpus = Path(os.environ["CASTLE_EXACT_TIMING_CORPUS"])
     assert (
@@ -132,10 +142,11 @@ def main():
         mark("execute.begin")
         result = worker._execute(request)
         mark("execute.end")
+        mark("execute.result_" + result.get("status", "invalid"))
+        atexit.register(lambda: mark("atexit_begin"))
         return result
     finally:
         builtins.__import__ = original_import
-        os.close(fd)
 
 
 if __name__ == "__main__":
@@ -145,3 +156,5 @@ if __name__ == "__main__":
         result = dict(status="unavailable", reason="timing_fixture_" + type(exc).__name__)
     sys.stdout.write(json.dumps(result))
     sys.stdout.flush()
+    if "mark" in _TRACE:
+        _TRACE["mark"]("stdout_flushed")
