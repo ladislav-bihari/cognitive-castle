@@ -54,6 +54,8 @@ def test_control_operator_creates_only_private_metadata_and_reopens(tmp_path):
         "capture_publication_intents",
         "capture_verified_chunks",
         "capture_count_baselines",
+        "discovery_roots",
+        "discovery_dirs",
     }
     assert not any(
         hasattr(store, name) for name in ("remember", "receipt", "recall", "read_sources")

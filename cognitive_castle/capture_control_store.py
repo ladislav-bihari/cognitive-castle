@@ -20,6 +20,7 @@ from .private_sqlite import private_connection, private_path
 DB_NAME = "control.sqlite3"
 ARTIFACT = "control-authority.json"
 APP_ID = 0x43434331
+SCHEMA_VERSION = 2
 _COLUMNS = {
     "capture_control_authority": [("id", "INTEGER"), ("value", "TEXT")],
     "checkpoints": [("source_key", "TEXT"), ("value", "TEXT")],
@@ -59,6 +60,22 @@ _COLUMNS = {
         ("generation", "INTEGER"),
         ("state", "TEXT"),
     ],
+    "discovery_roots": [
+        ("root_key", "TEXT"),
+        ("path", "TEXT"),
+        ("format", "TEXT"),
+        ("sweep", "INTEGER"),
+        ("completed_sweeps", "INTEGER"),
+        ("complete_ns", "INTEGER"),
+        ("errors", "INTEGER"),
+    ],
+    "discovery_dirs": [
+        ("root_key", "TEXT"),
+        ("path", "TEXT"),
+        ("cursor", "TEXT"),
+        ("identity", "TEXT"),
+        ("done", "INTEGER"),
+    ],
 }
 _INDEXES = {
     "capture_verified_source",
@@ -68,6 +85,7 @@ _INDEXES = {
     "capture_chunk_generation",
     "capture_publication_state",
     "capture_publication_pending",
+    "discovery_pending",
 }
 
 
@@ -136,7 +154,7 @@ class CaptureControlStore:
         conn.execute("PRAGMA trusted_schema=OFF")
         if (
             conn.execute("PRAGMA application_id").fetchone()[0] != APP_ID
-            or conn.execute("PRAGMA user_version").fetchone()[0] != 1
+            or conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
         ):
             raise _Corrupt("control schema version")
         objects = conn.execute(
@@ -170,6 +188,7 @@ class CaptureControlStore:
     def _initialize_schema(self, conn):
         if self._creating:
             from .memory_capture import _ensure
+            from .memory_discovery import _ensure as ensure_discovery
 
             if conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
                 raise _Corrupt("control initialization must be pristine")
@@ -180,6 +199,7 @@ class CaptureControlStore:
                 "CREATE TABLE coverage_observations (sequence INTEGER PRIMARY KEY AUTOINCREMENT,identity TEXT UNIQUE NOT NULL,value TEXT NOT NULL)"
             )
             _ensure(conn)
+            ensure_discovery(conn)
             conn.execute(
                 "CREATE TABLE capture_verified_chunks (chunk_id TEXT PRIMARY KEY,source_key TEXT NOT NULL,generation INTEGER NOT NULL)"
             )
@@ -196,7 +216,7 @@ class CaptureControlStore:
                 "INSERT INTO capture_control_authority VALUES (1,?)", (_json(self.authority),)
             )
             conn.execute(f"PRAGMA application_id={APP_ID}")
-            conn.execute("PRAGMA user_version=1")
+            conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self._validate_schema(conn)
 
     @contextmanager

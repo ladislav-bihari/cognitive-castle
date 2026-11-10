@@ -34,6 +34,10 @@ def _execute(request):
                 "coverage": capture.coverage,
             }[operation]
             return target(store, **args)
+        if operation in {"discover_sources", "discovery_status"}:
+            from cognitive_castle import memory_discovery
+
+            return getattr(memory_discovery, operation)(store, **args)
         from cognitive_castle.capture_publication import select_recovery_page, apply_recovery_page
 
         if operation == "recovery_select":

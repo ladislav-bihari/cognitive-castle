@@ -21,6 +21,8 @@ SUPPORTED = {
     "source_page",
     "queue_source",
     "capture_one",
+    "discover_sources",
+    "discovery_status",
 }
 
 

@@ -159,7 +159,7 @@ def test_selected_marker_disappearing_after_read_does_not_authorize_legacy_retur
     assert made[0].closed
 
 
-@pytest.mark.parametrize("operation", ["recall", "restore_context", "discover_sources"])
+@pytest.mark.parametrize("operation", ["recall", "restore_context", "status"])
 def test_selected_unsupported_route_never_creates_lease_or_uses_old_backend(
     monkeypatch, tmp_path, operation
 ):
@@ -176,6 +176,13 @@ def test_selected_unsupported_route_never_creates_lease_or_uses_old_backend(
     "operation,arguments,worker_operation,cap",
     [
         ("coverage", {}, "coverage", 2),
+        ("discovery_status", {}, "discovery_status", 2),
+        (
+            "discover_sources",
+            dict(allowed_root="/", format="codex", max_entries=16),
+            "discover_sources",
+            3,
+        ),
         ("source_page", {}, "source_page", 2),
         (
             "queue_source",
