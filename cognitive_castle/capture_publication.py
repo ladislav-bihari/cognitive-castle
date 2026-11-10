@@ -251,53 +251,156 @@ def _recovery_source(conn, source_key):
     return decode_source(row)
 
 
-def recover_publications(store, source_key):
-    """Probe at most two intents fairly; absence never blocks fresh capture.
+def _recovery_page(conn, source_key):
+    from .capture_recovery_codec import prepare_page
 
-    Expected IDs stay pending until an actual canonical receipt confirms them.
-    A durable keyset cursor prevents old absent requests starving later ones.
-    """
-    empty = dict(status="ok", checked=0, recovered=0, pending=0)
-    with store._connect() as conn:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE name='capture_publication_intents'"
-        ).fetchone():
-            return empty
-        source = _recovery_source(conn, source_key)
-        after = source.get("publication_recovery_after", "")
-        if not isinstance(after, str) or after and not re.fullmatch(r"[a-f0-9]{64}", after):
-            raise _Corrupt("invalid capture recovery cursor")
-        query = (
-            "SELECT CAST(substr(CAST(request_key AS BLOB),1,65) AS TEXT) AS request_key "
-            "FROM capture_publication_intents WHERE source_key=? AND state IS NOT 'applied' "
-            "AND request_key>? ORDER BY request_key LIMIT 2"
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='capture_publication_intents'"
+    ).fetchone():
+        return prepare_page(source_key, "", [])
+    source = _recovery_source(conn, source_key)
+    after = source.get("publication_recovery_after", "")
+    revision = source.get("publication_recovery_revision", 0)
+    if not isinstance(after, str) or after and not re.fullmatch(r"[a-f0-9]{64}", after):
+        raise _Corrupt("invalid capture recovery cursor")
+    query = (
+        "SELECT CAST(substr(CAST(request_key AS BLOB),1,65) AS TEXT) AS request_key "
+        "FROM capture_publication_intents WHERE source_key=? AND state IS NOT 'applied' "
+        "AND request_key>? ORDER BY request_key LIMIT 2"
+    )
+    rows = conn.execute(query, (source_key, after)).fetchall()
+    if not rows and after:
+        rows = conn.execute(query, (source_key, "")).fetchall()
+    references = []
+    for row in rows:
+        stored = _row(conn, row[0])
+        intent = _decode(stored)
+        references.append(
+            dict(
+                id=row[0],
+                binding=stored["binding"],
+                namespace=intent["namespace"],
+                key=intent["key"],
+            )
         )
-        rows = conn.execute(query, (source_key, after)).fetchall()
-        if not rows and after:
-            rows = conn.execute(query, (source_key, "")).fetchall()
-        intents = [(row[0], _decode(_row(conn, row[0]))) for row in rows]
-    if not intents:
-        return empty
-    recovered = 0
-    for identity, intent in intents:
-        proof = store.receipt(namespace=intent["namespace"], key=intent["key"])
-        if proof.get("status") == "not_found":
-            continue
-        if proof.get("status") != "ok":
-            return proof
-        if proof.get("digest") != intent["digest"] or proof.get("receipt") != intent["receipt"]:
-            raise _Corrupt("canonical publication receipt conflict")
-        with store._connect(True) as conn:
-            current = _decode(_row(conn, identity))
-            if current != intent:
-                raise _Corrupt("publication intent changed during recovery")
-            _apply(conn, identity, intent)
-        recovered += 1
-    with store._connect(True) as conn:
-        from .memory_capture import _write
+    try:
+        return prepare_page(source_key, after, references, revision=revision)
+    except ValueError as exc:
+        raise _Corrupt("invalid capture recovery page") from exc
 
-        source = _recovery_source(conn, source_key)
-        source["publication_recovery_after"] = intents[-1][0]
+
+def select_recovery_page(store, source_key):
+    """Select at most two body-free references; never invoke a canonical reader."""
+    with store._connect() as conn:
+        return _recovery_page(conn, source_key)
+
+
+def _recovery_ack(source):
+    ack = source.get("publication_recovery_ack")
+    if ack is None:
+        return None
+    try:
+        if not isinstance(ack, dict) or ack.keys() != {
+            "page",
+            "proofs",
+            "result",
+            "revision",
+            "binding",
+        }:
+            raise ValueError("recovery ack fields")
+        for key in ("page", "proofs", "binding"):
+            if not isinstance(ack[key], str) or not re.fullmatch(r"[a-f0-9]{64}", ack[key]):
+                raise ValueError("recovery ack hash")
+        result = ack["result"]
+        if (
+            not isinstance(result, dict)
+            or result.keys() != {"status", "checked", "recovered", "pending"}
+            or result["status"] != "ok"
+        ):
+            raise ValueError("recovery ack result")
+        if any(type(result[k]) is not int for k in ("checked", "recovered", "pending")) or not (
+            0 <= result["recovered"] <= result["checked"] <= 2 and 0 <= result["pending"] < 2**63
+        ):
+            raise ValueError("recovery ack counts")
+        if (
+            type(ack["revision"]) is not int
+            or not 1 <= ack["revision"] < 2**63
+            or source.get("publication_recovery_revision") != ack["revision"]
+        ):
+            raise ValueError("recovery ack revision")
+        if ack["binding"] != _hash(_json({k: v for k, v in ack.items() if k != "binding"})):
+            raise ValueError("recovery ack commitment")
+        return ack
+    except (ValueError, KeyError, TypeError) as exc:
+        raise _Corrupt("invalid capture recovery ack") from exc
+
+
+def apply_recovery_page(store, page, proofs):
+    """CAS-apply externally observed receipts atomically; no checkpoint movement."""
+    from . import capture_recovery_codec as codec
+    from .memory_capture import _write
+
+    page = codec.validate_page(page)
+    try:
+        proofs = codec.validate_proofs(page, proofs)
+    except ValueError as exc:
+        raise _Corrupt("invalid canonical recovery proof") from exc
+    proof_binding = _hash(_json(proofs))
+    with store._connect(True) as conn:
+        if not page["references"]:
+            if _recovery_page(conn, page["source_key"]) != page:
+                raise _Corrupt("capture recovery page changed")
+            return dict(status="ok", checked=0, recovered=0, pending=0)
+        source = _recovery_source(conn, page["source_key"])
+        previous = _recovery_ack(source)
+        if previous is not None and previous["page"] == page["binding"]:
+            if (
+                previous["proofs"] != proof_binding
+                or source.get("publication_recovery_after") != page["references"][-1]["id"]
+            ):
+                raise _Corrupt("capture recovery retry changed")
+            return previous["result"]
+        if _recovery_page(conn, page["source_key"]) != page:
+            raise _Corrupt("capture recovery page changed")
+        recovered = 0
+        for reference, proof in zip(page["references"], proofs):
+            row = _row(conn, reference["id"])
+            intent = _decode(row)
+            if row["binding"] != reference["binding"] or intent["source_key"] != page["source_key"]:
+                raise _Corrupt("capture recovery intent changed")
+            if proof["status"] == "not_found":
+                continue
+            if proof["digest"] != intent["digest"] or proof["receipt"] != intent["receipt"]:
+                raise _Corrupt("canonical publication receipt conflict")
+            _apply(conn, reference["id"], intent)
+            recovered += 1
+        result = dict(
+            status="ok",
+            checked=len(proofs),
+            recovered=recovered,
+            pending=pending_publications(conn, page["source_key"]),
+        )
+        ack = dict(
+            page=page["binding"], proofs=proof_binding, result=result, revision=page["revision"] + 1
+        )
+        source.update(
+            publication_recovery_after=page["references"][-1]["id"],
+            publication_recovery_revision=page["revision"] + 1,
+            publication_recovery_ack={**ack, "binding": _hash(_json(ack))},
+        )
         _write(conn, source)
-        pending = pending_publications(conn, source_key)
-    return dict(status="ok", checked=len(intents), recovered=recovered, pending=pending)
+        return result
+
+
+def recover_publications(store, source_key):
+    """Legacy orchestration of the split control/exact protocol; no fallback."""
+    page = select_recovery_page(store, source_key)
+    if not page["references"]:
+        return dict(status="ok", checked=0, recovered=0, pending=0)
+    proofs = []
+    for reference in page["references"]:
+        proof = store.receipt(namespace=reference["namespace"], key=reference["key"])
+        if not isinstance(proof, dict) or proof.get("status") not in {"ok", "not_found"}:
+            return proof if isinstance(proof, dict) else dict(status="unavailable")
+        proofs.append(proof)
+    return apply_recovery_page(store, page, proofs)
