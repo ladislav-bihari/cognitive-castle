@@ -89,6 +89,8 @@ def test_replacement_retains_history_and_paths_refused(tmp_path):
 
 @requires_posix_storage
 def test_failed_piece_retry_and_large_text(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     path = tmp_path / "session"
     text = "🙂" * 20000
     path.write_bytes(line(record(text)))
@@ -97,6 +99,10 @@ def test_failed_piece_retry_and_large_text(tmp_path, monkeypatch):
     calls = []
 
     committed = []
+    clock = [0.0]
+    # Force a valid slice boundary after the first durable piece. This test
+    # must not depend on two SQLite publications fitting one wall-clock slice.
+    monkeypatch.setattr(ingest, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
     def fail_second(*args, **kwargs):
         calls.append(args[0])
@@ -104,22 +110,30 @@ def test_failed_piece_retry_and_large_text(tmp_path, monkeypatch):
             return {"status": "busy"}
         receipt = original(*args, **kwargs)
         committed.append(receipt)
+        clock[0] += 1
         return receipt
 
     monkeypatch.setattr(store, "remember", fail_second)
+    partial = ingest.ingest_slice(store, path, allowed_root=tmp_path, format="codex")
+    assert partial["status"] == "ok" and partial["offset"] == 0 and len(calls) == 1
     assert (
         ingest.ingest_slice(store, path, allowed_root=tmp_path, format="codex")["status"] == "busy"
     )
+    assert len(calls) == 2 and calls[0] != calls[1]
     receipts = []
+    replayed = []
 
     def capture(*args, **kwargs):
+        replayed.append(args[0])
         receipt = original(*args, **kwargs)
         receipts.append(receipt)
+        clock[0] += 1
         return receipt
 
     monkeypatch.setattr(store, "remember", capture)
     result = ingest.ingest_slice(store, path, allowed_root=tmp_path, format="codex")
-    assert result["status"] == "ok"
+    assert result["status"] == "ok" and result["offset"] == path.stat().st_size
+    assert replayed == [calls[1]]
     assert store.status()["indexed_chunks"] == 10
     restored = "".join(
         source["text"]
