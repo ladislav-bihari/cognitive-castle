@@ -166,3 +166,20 @@ def test_split_recovery_corrupt_saved_ack_cannot_fabricate_a_successful_retry(
         _write(conn, source)
     with pytest.raises(_Corrupt):
         journal.apply_recovery_page(store, page, actual)
+
+
+def test_saved_ack_rejects_noninteger_source_revision():
+    import hashlib
+
+    ack = dict(
+        page="a" * 64,
+        proofs="b" * 64,
+        result=dict(status="ok", checked=1, recovered=1, pending=0),
+        revision=1,
+    )
+    raw = json.dumps(ack, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    ack["binding"] = hashlib.sha256(raw.encode()).hexdigest()
+    for revision in (True, 1.0):
+        source = dict(publication_recovery_ack=ack, publication_recovery_revision=revision)
+        with pytest.raises(_Corrupt):
+            journal._recovery_ack(source)
