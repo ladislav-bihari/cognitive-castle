@@ -24,6 +24,7 @@ from .semantic_queue import (
     validate_receipt,
     validate_references,
     validate_scope,
+    scope_projection,
 )
 from .semantic_windows import MAX_SOURCES, PAGE_SIZE, input_binding, validate_page
 
@@ -109,6 +110,18 @@ def _float32(vector):
     return values, hashlib.sha256(binary).hexdigest()
 
 
+def scope_filter(scope):
+    """Typed exact predicate; null workspace selects only unscoped units."""
+    projected = scope_projection(scope)
+    import pyarrow.compute as pc
+
+    return (
+        (pc.field("workspace") == projected["workspace"])
+        & (pc.field("wing") == projected["wing"])
+        & (pc.field("room") == projected["room"])
+    )
+
+
 def prepare_publication(batch_key, references, page, inference):
     """Pure validated compact handoff; inference JSON spelling is not identity."""
     _string(batch_key, MAX_BATCH_KEY_BYTES, "batch key")
@@ -173,7 +186,7 @@ def prepare_publication(batch_key, references, page, inference):
                 "canonical_id": unit["canonical_id"],
                 "source_hash": unit["source_hash"],
                 "exposure_hash": reference["exposure_hash"],
-                **reference["scope"],
+                **scope_projection(reference["scope"]),
                 "nonsemantic": unit["nonsemantic"],
                 "compact": canonical_json(compact),
                 "record_hash": record_hash,
@@ -397,7 +410,8 @@ class LanceVectorStore:
             for name in ("canonical_id", "source_hash", "exposure_hash", "profile", "nonsemantic"):
                 if row[name] != compact[name]:
                     raise ValueError("compact projection")
-            if any(row[name] != compact["scope"][name] for name in ("workspace", "wing", "room")):
+            projected = scope_projection(compact["scope"])
+            if any(row[name] != projected[name] for name in ("workspace", "wing", "room")):
                 raise ValueError("scope projection")
             for name in (
                 "token_start",
@@ -631,8 +645,7 @@ class LanceVectorStore:
                 & (pc.field("profile") == profile)
                 & (pc.field("nonsemantic") == False)  # noqa: E712
             )
-            for name in ("workspace", "wing", "room"):
-                predicate = predicate & (pc.field(name) == scope[name])
+            predicate = predicate & scope_filter(scope)
             if allowed_source_hashes is not None:
                 predicate = predicate & pc.field("source_hash").isin(allowed_source_hashes)
             if allowed_exposure_hashes is not None:

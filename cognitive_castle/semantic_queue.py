@@ -32,8 +32,20 @@ def validate_scope(scope):
     if not isinstance(scope, dict) or set(scope) != {"workspace", "wing", "room"}:
         raise ValueError("full trusted scope required")
     for name, maximum in SCOPE_LIMITS:
+        if name == "workspace" and scope[name] is None:
+            continue  # Explicit unscoped identity, never a wildcard or a grant.
         _string(scope[name], maximum, name)
     return scope
+
+
+def scope_projection(scope):
+    """Encode null workspace into reserved empty non-null native column.
+
+    Public empty workspace labels remain invalid. Authoritative compact metadata
+    retains null, so this encoding never assigns a fictitious workspace.
+    """
+    validate_scope(scope)
+    return {**scope, "workspace": "" if scope["workspace"] is None else scope["workspace"]}
 
 
 def validate_references(references):

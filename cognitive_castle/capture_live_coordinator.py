@@ -38,8 +38,11 @@ def advance(control, source_key, generation, envelope_hash, *, wing, room):
         scope = result["scope"]
         if not isinstance(scope, dict) or scope.keys() != {"workspace", "attribution", "map"}:
             raise ValueError("capture scope")
-        if scope["map"] is not True or scope["workspace"] is None:
-            return dict(status="in_progress", reason="capture_scope_unresolved")
+        if type(scope["map"]) is not bool:
+            raise ValueError("capture scope mapping")
+        workspace = scope["workspace"] if scope["map"] else None
+        if scope["map"] and workspace is None:
+            raise ValueError("mapped capture workspace")
         preparation = result["preparation"]
         if not isinstance(preparation, dict) or preparation.keys() != {
             "request_id",
@@ -51,7 +54,7 @@ def advance(control, source_key, generation, envelope_hash, *, wing, room):
         canonical = prepare_remember(**preparation)
         publication = prepare_publication(
             canonical,
-            [dict(workspace=scope["workspace"], wing=wing, room=room) for _ in canonical.records],
+            [dict(workspace=workspace, wing=wing, room=room) for _ in canonical.records],
         )
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         return dict(status="unavailable", reason="capture_preparation_contract")

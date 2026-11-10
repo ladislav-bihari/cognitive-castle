@@ -107,28 +107,32 @@ def test_wrong_or_late_receipt_cannot_confirm_source(tmp_path, monkeypatch, wron
         assert conn.execute("SELECT count(*) FROM capture_verified_chunks").fetchone()[0] == 0
 
 
-def test_unscoped_source_is_pending_without_inventing_workspace_or_publishing(
-    tmp_path, monkeypatch
-):
-    store, authority, _, key, _ = source_case(tmp_path)
+def test_actual_unscoped_capture_commits_without_inventing_workspace(tmp_path, monkeypatch):
+    from test_capture_control_store import create
+    from test_capture_handoff import transcript
+
+    store, authority = create(tmp_path)
+    path = transcript(tmp_path, "unscoped original Ω\x00\r\n")
+    queued = worker()._execute(
+        request(
+            authority,
+            "source_queue",
+            dict(path=str(path), allowed_root=str(tmp_path), format="codex"),
+        )
+    )
+    assert queued["status"] == "ok"
+    key = queued["source_key"]
     control = Control(authority)
-    original = control.call
-
-    def unscoped(operation, arguments):
-        result = original(operation, arguments)
-        if result.get("status") == "prepared":
-            result["scope"] = dict(workspace=None, attribution="unknown", map=False)
-        return result
-
-    control.call = unscoped
-
-    def forbidden(*args):
-        raise AssertionError("unscoped words received an invented publication scope")
-
-    monkeypatch.setattr(live_publication, "publish", forbidden)
+    _, publications = publisher_fixture(tmp_path, monkeypatch, control)
     result = run(control, key)
-    assert result == dict(status="in_progress", reason="capture_scope_unresolved")
-    assert store.load_checkpoint(key)["offset"] == 0
+    assert result["status"] == "ok" and result["publication_consumed"] is True
+    assert store.load_checkpoint(key)["offset"] == path.stat().st_size
+    reference = publications[0].intent["semantic"]["groups"][0]["references"][0]
+    assert reference["scope"] == dict(workspace=None, wing="projects", room="conversations")
+    with store._connect() as conn:
+        assert conn.execute("SELECT count(*) FROM capture_verified_chunks").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM capture_chunk_scopes").fetchone()[0] == 0
+    assert control.call("coverage", {})["unscoped_chunks"] == 1
 
 
 def test_source_rewrite_during_publication_cannot_confirm_changed_words(tmp_path, monkeypatch):
