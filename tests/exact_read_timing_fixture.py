@@ -81,14 +81,48 @@ def main():
     wrap(partition._PartitionStore, "_lookup_rows", "row_lookup")
     original_import = builtins.__import__
     imports = set()
+    plugin_wrapped = False
 
     def traced_import(name, globals=None, locals=None, fromlist=(), level=0):
-        observed = level == 0 and name in {"lance", "pyarrow", "numpy"} and name not in imports
+        nonlocal plugin_wrapped
+        observed = (
+            level == 0
+            and name
+            in {
+                "lance",
+                "pyarrow",
+                "numpy",
+                "lance_namespace",
+                "lance_namespace_urllib3_client",
+                "pydantic",
+                "pydantic_core",
+            }
+            and name not in imports
+        )
         if observed:
             imports.add(name)
             mark("import_" + name + ".begin")
         try:
-            return original_import(name, globals, locals, fromlist, level)
+            result = original_import(name, globals, locals, fromlist, level)
+            loader = sys.modules.get("pydantic.plugin._loader")
+            if not plugin_wrapped and loader is not None and hasattr(loader, "get_plugins"):
+                plugin_wrapped = True
+                get_plugins = loader.get_plugins
+                plugin_measured = False
+
+                def measured_plugins():
+                    nonlocal plugin_measured
+                    if plugin_measured:
+                        return get_plugins()
+                    plugin_measured = True
+                    mark("plugin_discovery.begin")
+                    try:
+                        return get_plugins()
+                    finally:
+                        mark("plugin_discovery.end")
+
+                loader.get_plugins = measured_plugins
+            return result
         finally:
             if observed:
                 mark("import_" + name + ".end")
