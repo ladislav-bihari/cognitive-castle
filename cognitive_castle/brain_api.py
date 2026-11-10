@@ -837,6 +837,15 @@ def configure_memory_parser(sub):
     )
     ingest.add_argument("--root", required=True)
     ingest.add_argument("--path", required=True)
+    semantic = actions.add_parser(
+        "semantic", help="Operator: explicit bounded semantic diagnostic; no activation"
+    )
+    semantic_actions = semantic.add_subparsers(dest="semantic_action", required=True)
+    tick = semantic_actions.add_parser("tick")
+    tick.add_argument("--max-seconds", type=float, default=5)
+    tick.add_argument(
+        "--diagnostic", action="store_true", help="Opt in to the diagnostic-only model profile"
+    )
     capture = actions.add_parser("capture", help="Operator: bounded automatic capture")
     capture_actions = capture.add_subparsers(dest="capture_action", required=True)
     for action in ("enable", "pause", "status", "tick", "reconcile"):
@@ -864,6 +873,12 @@ def cmd_memory(args):
             from .history_cli import cmd_history
 
             result = cmd_history(api.palace, args)
+        elif args.memory_action == "semantic":
+            from .semantic_coordinator import index_tick
+
+            result = index_tick(
+                api.palace, diagnostic=args.diagnostic, max_seconds=args.max_seconds
+            )
         elif args.memory_action == "capture":
             from .memory_coordinator import capture_status, capture_tick, configure_capture
 
