@@ -7,6 +7,13 @@ import pytest
 from test_memory_selection import fixture, select
 
 
+@pytest.fixture(autouse=True)
+def isolated_admission(monkeypatch, tmp_path):
+    from cognitive_castle import memory_runtime
+
+    monkeypatch.setattr(memory_runtime, "_admission_directory", lambda: tmp_path)
+
+
 def api():
     from cognitive_castle import memory_selection
 
@@ -162,8 +169,8 @@ def test_active_selector_refuses_operations_before_admission(monkeypatch, tmp_pa
     def forbidden():
         pytest.fail("operation attempted worker admission while selector owned the lease")
 
-    monkeypatch.setattr(memory_runtime, "_admission", forbidden)
     with api().selection_lease(palace, selected, exclusive=True):
+        monkeypatch.setattr(memory_runtime, "_admission", forbidden)
         if operation == "read":
             result = memory_selected_runtime.run_selected(
                 palace,
@@ -176,3 +183,37 @@ def test_active_selector_refuses_operations_before_admission(monkeypatch, tmp_pa
         else:
             result = semantic_coordinator.index_tick(palace, diagnostic=True)
     assert result == dict(status="unavailable", reason="canonical_selection_busy")
+
+
+def test_selector_waits_for_descendant_admission_after_host_fd_closes(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from cognitive_castle import memory_runtime
+
+    palace, _, selected = fixture(tmp_path)
+    fd = memory_runtime._admission()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; print('ready', flush=True); sys.stdin.readline()",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        pass_fds=(fd,),
+    )
+    os.close(fd)
+    try:
+        assert proc.stdout.readline().strip() == "ready"
+        with pytest.raises(api().SelectionBusy):
+            with api().selection_lease(palace, selected, exclusive=True):
+                pytest.fail("selector switched while an orphaned worker retained admission")
+    finally:
+        proc.communicate("exit\n", timeout=2)
+    assert proc.returncode == 0
+    with api().selection_lease(palace, selected, exclusive=True):
+        pass

@@ -33,12 +33,13 @@ def selection_lease(palace, expected, *, exclusive=False):
     """Pin the existing private metadata directory without creating lock files.
 
     Operations hold a shared lease; a cooperating operator selector must hold
-    the exclusive lease across validation and publication. Both are nonblocking.
+    the exclusive lease across validation and publication; exclusive acquisition
+    also drains inherited worker admission. Both are nonblocking.
     This alone does not implement or authorize an activation/rollback writer.
     """
     if type(exclusive) is not bool:
         raise ValueError("selection lease mode")
-    fd = None
+    fd = drain = None
     try:
         import fcntl
 
@@ -52,26 +53,35 @@ def selection_lease(palace, expected, *, exclusive=False):
             fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SelectionBusy("canonical selection busy") from None
+        if exclusive:
+            # Descendants inherit global admission. If a host dies, its shared
+            # directory lease can vanish before its worker exits; the selector
+            # must still drain that worker before changing authority.
+            from .memory_runtime import _admission
+
+            try:
+                drain = _admission()
+            except BlockingIOError:
+                raise SelectionBusy("canonical workers still draining") from None
         after = _directory(directory)
         if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino) or load_selection(
             palace
         ) != expected:
             raise ValueError("selection changed before lease")
-    except SelectionBusy:
-        if fd is not None:
-            os.close(fd)
-        raise
-    except (OSError, ValueError, AttributeError, ImportError):
-        if fd is not None:
-            os.close(fd)
-        raise SelectionUnavailable("canonical selection lease unavailable") from None
-    except BaseException:
-        if fd is not None:
-            os.close(fd)
+    except BaseException as exc:
+        for owned in (drain, fd):
+            if owned is not None:
+                os.close(owned)
+        if isinstance(exc, SelectionBusy):
+            raise
+        if isinstance(exc, (OSError, ValueError, AttributeError, ImportError)):
+            raise SelectionUnavailable("canonical selection lease unavailable") from None
         raise
     try:
         yield
     finally:
+        if drain is not None:
+            os.close(drain)
         os.close(fd)
 
 
