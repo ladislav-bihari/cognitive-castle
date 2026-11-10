@@ -221,6 +221,7 @@ def initialize_capture_control(directory, *, max_bytes):
     if type(max_bytes) is not int or not codec.MIN_BYTES <= max_bytes <= codec.MAX_BYTES:
         raise ValueError("control operator budget")
     directory = Path(directory)
+    codec._path(str(directory), canonical=True)
     if not directory.is_absolute() or ".." in directory.parts:
         raise ValueError("control operator directory")
     for path in (directory, *directory.parents):
