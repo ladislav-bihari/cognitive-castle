@@ -185,3 +185,87 @@ def test_selected_native_ordinary_page_preserves_hash_offsets_and_controls(monke
     assert (
         result["text_hash"] == original["provenance"]["text_hash"] and result["complete"] is False
     )
+
+
+def test_selected_control_discovery_reopens_and_finds_new_earlier_names(monkeypatch):
+    from cognitive_castle import memory_runtime, semantic_runtime
+    from test_layout_native_integration import _start, _record
+
+    root, _ = _handoff()
+    originals = root / "discovered-originals"
+    originals.mkdir(mode=0o700)
+    nested = originals / "nested"
+    nested.mkdir(mode=0o700)
+    body = "DISCOVERY_SELECTED_NATIVE Ω"
+    raw = (
+        json.dumps(
+            dict(
+                type="response_item",
+                payload=dict(
+                    type="message", role="user", content=[dict(type="input_text", text=body)]
+                ),
+            ),
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    (originals / "a.jsonl").write_text(raw)
+    (nested / "c.jsonl").write_text(raw)
+    original_stage = semantic_runtime.SemanticSession._run_stage
+
+    def observe(self, request, **limits):
+        operation = request["operation"]
+        assert Path(limits["worker_command"][2]).name == "capture_control_worker.py"
+        assert limits["rss"] == 128 * 1024**2 and limits["total"] == 192 * 1024**2
+        assert limits["cap"] == (3 if operation == "discover_sources" else 2)
+        previous = len(self.resources)
+        number = _start("queue_selected_discovery_" + operation)
+        result = original_stage(self, request, **limits)
+        _record(self, "queue_selected_discovery_" + operation, result, previous, number)
+        return result
+
+    monkeypatch.setattr(semantic_runtime.SemanticSession, "_run_stage", observe)
+
+    def run(operation, args):
+        before = time.monotonic()
+        result = memory_runtime.run_memory(root / "palace", operation, args)
+        elapsed = time.monotonic() - before
+        print(
+            "SELECTED_DISCOVERY_OPERATION "
+            + json.dumps(dict(operation=operation, seconds=elapsed)),
+            flush=True,
+        )
+        assert result["status"] == "ok" and elapsed <= (
+            3 if operation == "discover_sources" else 2
+        ), result
+        assert not {"sqlite3", "lance", "lancedb", "pyarrow", "numpy", "torch"}.intersection(
+            sys.modules
+        )
+        return result
+
+    assert run("discovery_status", {})["roots"] == []
+    for sweep_number in (1, 2):
+        if sweep_number == 2:
+            (originals / "0-new.jsonl").write_text(raw)
+        for _ in range(12):
+            result = run(
+                "discover_sources", dict(allowed_root=str(originals), format="codex", max_entries=1)
+            )
+            if result["discovery"] == "complete_at_last_sweep":
+                break
+        else:
+            pytest.fail("bounded actual discovery sweep never completed")
+        status = run("discovery_status", {})
+        assert status["roots"][0]["completed_sweeps"] == sweep_number
+        assert status["source_currentness"] == "last_observed_only"
+    sources = run("source_page", {})["sources"]
+    assert {r["path"] for r in sources} == {
+        str(originals / "a.jsonl"),
+        str(nested / "c.jsonl"),
+        str(originals / "0-new.jsonl"),
+    }
+    assert all(r["processed_bytes"] == 0 for r in sources)
+    for path in (root / "control").iterdir():
+        if path.is_file():
+            assert path.stat().st_size <= 4 * 1024**2
+            assert b"DISCOVERY_SELECTED_NATIVE" not in path.read_bytes()
