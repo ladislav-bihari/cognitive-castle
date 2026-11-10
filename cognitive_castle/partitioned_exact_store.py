@@ -249,7 +249,9 @@ class PartitionedExactStore:
                 return proof
         return {**batch, "owner_proof": proof}
 
-    def layout_read(self, operation, arguments, *, context=None):
+    def layout_read(self, operation, arguments, *, context=None, envelope_hash=None):
+        if envelope_hash is not None:
+            bulk.sha(envelope_hash)
         if operation not in _READ_FIELDS or not isinstance(arguments, dict):
             raise ValueError("layout read operation")
         required, optional = _READ_FIELDS[operation]
@@ -268,9 +270,15 @@ class PartitionedExactStore:
         if operation == "directory_page":
             for key in ("partition_id", "version", "cursor"):
                 bulk.integer(arguments[key])
-        return self._run(
-            lambda authority: self._read(authority, operation, arguments, identities, context)
-        )
+
+        def read(authority):
+            # Check the independently selected authority inside the existing
+            # metadata transaction, before opening any native partition.
+            if envelope_hash is not None and migration.hashed(authority.envelope) != envelope_hash:
+                return dict(status="conflict", reason="selected_layout_authority")
+            return self._read(authority, operation, arguments, identities, context)
+
+        return self._run(read)
 
     def _read(self, authority, operation, arguments, identities, context):
         if operation == "directory_page":

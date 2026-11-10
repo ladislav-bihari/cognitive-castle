@@ -234,6 +234,18 @@ def run_memory(
     if not path.is_dir() or path.resolve() != path:
         return _unavailable("unsafe_palace_path")
     started = time.monotonic()
+    from .memory_selection import load_selection, SelectionUnavailable
+
+    try:
+        selected = load_selection(path)
+    except SelectionUnavailable:
+        return _unavailable("canonical_selection_unavailable")
+    if selected is not None:
+        from .memory_selected_runtime import run_selected
+
+        return run_selected(
+            path, selected, operation, arguments, until=started + deadline, background=background
+        )
     fd = waiter = None
     try:
         if background and interactive_waiting():

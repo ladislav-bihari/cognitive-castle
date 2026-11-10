@@ -18,7 +18,7 @@ _FIELDS = {
         {"intent_id", "batch_id", "source_binding", "entries", "finalizations"},
         set(),
     ),
-    "layout_read": ({"operation", "arguments"}, {"context"}),
+    "layout_read": ({"operation", "arguments"}, {"context", "envelope_hash"}),
     "layout_maintain": ({"partition_id"}, set()),
     "layout_verify_owners": ({"intent_id", "version"}, set()),
     "import_batch": ({"batch_id", "source_binding", "entries", "finalizations"}, set()),
